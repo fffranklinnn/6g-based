@@ -114,15 +114,3 @@ class Env(gym.Env):
 if __name__ == "__main__":
     env = Env()
     env.run_simulation()
-
-    # def initialize_positions(self, num_satellites, num_users):
-    #     # 随机生成卫星和用户的位置
-    #     satellite_positions = np.random.rand(num_satellites, 2)  # 卫星位置 (x, y)
-    #     user_positions = np.random.rand(num_users, 2)  # 用户位置 (x, y)
-    #     return satellite_positions, user_positions
-
-    # def initialize_variables(self, num_satellites, num_users, total_time):
-    #     # 初始化覆盖指示变量和接入决策变量为全零矩阵
-    #     coverage_indicator = np.zeros((num_satellites, num_users, total_time), dtype=int)
-    #     access_decision = np.zeros((num_satellites, num_users, total_time), dtype=int)
-    #     return coverage_indicator, access_decision
