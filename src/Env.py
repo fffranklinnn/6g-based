@@ -35,6 +35,12 @@ class Env(gym.Env):
         self.coverage_indicator = np.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER, self.TOTAL_TIME))
         self.access_decision = np.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER, self.TOTAL_TIME))
         self.current_time_step = 0
+        self.w1 = 1  # 切换次数的权重
+        self.w2 = 1  # 用户传输速率的权重
+        self.r_thr = -5  # 最低的CINR阈值，单位：dB
+        self.switch_count = np.zeros(self.NUM_GROUND_USER)  # 每个用户的切换次数
+        # 初始化用户传输速率矩阵
+        self.user_rate = np.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER, self.TOTAL_TIME))
 
     def initialize_ground(self):
         # 从data_ground.csv中读取数据，这个csv中总共有NUM_TIME_SLOTS行，
@@ -70,42 +76,81 @@ class Env(gym.Env):
         return sat_heights
 
     def step(self, action):
-        # 当前时隙索引，假设您有一个变量来跟踪当前的时间槽
-        current_time_slot = self.get_current_time_slot()
+        # 更新覆盖指示变量
+        self.update_coverage_indicator(self.current_time_step)
 
-        # 在每个时隙开始时更新覆盖情况
-        self.update_coverage_indicator(current_time_slot)
-
-        # 将一维动作数组转换为二维形式
+        # 将一维动作数组转换为二维形式，用于表示每个用户选择的卫星
         action_matrix = action.reshape((self.NUM_GROUND_USER, self.NUM_SATELLITES))
 
-        # 根据action_matrix更新环境状态
-        # 注意：这里需要添加你的环境逻辑，例如更新用户卫星连接状态等
+        # 检查并更新切换次数
+        for user_index in range(self.NUM_GROUND_USER):
+            current_satellite = np.argmax(action_matrix[user_index])
+            if self.current_time_step > 0:
+                previous_satellite = np.argmax(self.access_decision[:, user_index, self.current_time_step - 1])
+                if current_satellite != previous_satellite:
+                    self.switch_count[user_index] += 1
+
+        # 根据action更新接入决策
+        self.access_decision[:, :, self.current_time_step] = action_matrix
+
+        # 计算用户传输速率
+        for user_index in range(self.NUM_GROUND_USER):
+            for satellite_index in range(self.NUM_SATELLITES):
+                if action_matrix[user_index, satellite_index] == 1:
+                    self.user_rate[satellite_index, user_index, self.current_time_step] = self.calculate_CNR(
+                        self.current_time_step, user_index, satellite_index)
 
         # 计算奖励
         reward = self.calculate_reward(action_matrix)
 
+        # 更新时间步
+        self.current_time_step += 1
+
         # 检查是否结束
-        done = self.check_if_done()
+        done = self.current_time_step >= self.NUM_TIME_SLOTS
+
+        # 获取当前环境的观察
+        observation = self.get_observation()
 
         # 可选的额外信息
         info = {}
 
-        return self.get_observation(), reward, done, info
+        return observation, reward, done, info
 
     def reset(self):
-        #暂时不考虑
-        pass
+        # 重置当前时间步
+        self.current_time_step = 0
+        # 重置覆盖指示变量和接入决策变量
+        self.coverage_indicator = np.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER, self.TOTAL_TIME))
+        self.access_decision = np.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER, self.TOTAL_TIME))
+        # 重置切换次数
+        self.switch_count = np.zeros(self.NUM_GROUND_USER)
+        # 重置用户传输速率
+        self.user_rate = np.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER, self.TOTAL_TIME))
+        # 返回初始观察
+        return self.get_observation()
 
     def get_observation(self):
-        # 获取当前环境的观察
-        observation = np.random.random(self.NUM_SATELLITES + self.NUM_GROUND_USER)  # 示例：随机生成观察
+        # 假设观察是基于当前时间步的覆盖指示情况和切换次数
+        observation = np.concatenate([
+            self.coverage_indicator[:, :, self.current_time_step].flatten(),
+            self.switch_count
+        ])
         return observation
 
     def calculate_reward(self, action_matrix):
-        # 根据动作和当前状态计算奖励
         reward = 0
-        # 奖励计算逻辑...
+        for user_index in range(self.NUM_GROUND_USER):
+            for satellite_index in range(self.NUM_SATELLITES):
+                if action_matrix[user_index, satellite_index] == 1:
+                    # 计算用户传输速率
+                    rate = self.user_rate[satellite_index, user_index, self.current_time_step]
+                    # 检查是否满足最低CINR阈值
+                    if rate >= self.r_thr:
+                        reward += self.w2 * rate
+                    else:
+                        reward -= self.w1 * self.switch_count[user_index]
+
         return reward
 
     def calculate_distance(self, time_slot, user_index, satellite_index):
@@ -166,6 +211,11 @@ class Env(gym.Env):
                 else:
                     self.coverage_indicator[satellite_index, user_index, current_time_slot] = 0
 
+
+if __name__ == "__main__":
+    env = Env()
+    # env.run_simulation()
+
     # def update_coverage_indicator(self):
     #     for time_slot in range(self.NUM_TIME_SLOTS):
     #         for user_index in range(self.NUM_GROUND_USER):
@@ -175,13 +225,6 @@ class Env(gym.Env):
     #                     self.coverage_indicator[satellite_index, user_index, time_slot] = 1
     #                 else:
     #                     self.coverage_indicator[satellite_index, user_index, time_slot] = 0
-
-
-if __name__ == "__main__":
-    env = Env()
-    # env.run_simulation()
-
-
     # def simulate_time_slots(self, total_time, num_users, num_satellites, coverage_indicator, access_decision):
     #     # 模拟每个时间段的覆盖和接入决策
     #     for t in range(total_time):
