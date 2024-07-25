@@ -3,6 +3,7 @@
 import numpy as np
 from env import Env
 
+
 def test_initialize_ground():
     env = Env()
     eval_angle = env.initialize_ground()
@@ -20,6 +21,7 @@ def test_initialize_ground():
     assert np.all((eval_angle >= -90) & (eval_angle <= 90)), \
         "eval_angle 中的值不在预期范围内"
 
+
 def test_initialize_satellite():
     env = Env()
     sat_heights = env.initialize_satellite()
@@ -36,6 +38,7 @@ def test_initialize_satellite():
     # 例如，检查某些值是否在预期范围内
     assert np.all(sat_heights >= 0), \
         "sat_heights 中的值不在预期范围内"
+
 
 if __name__ == "__main__":
     test_initialize_ground()
