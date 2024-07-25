@@ -46,30 +46,34 @@ class Env(gym.Env):
         # 初始化用户传输速率矩阵
         self.user_rate = np.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER, self.NUM_TIME_SLOTS))
 
+        # 初始化信道容量矩阵
+        self.channel_capacity = np.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER, self.NUM_TIME_SLOTS))
+
+        # 初始化用户需求速率
+        self.user_demand_rate = np.random.uniform(1e6, 10e6, (self.NUM_GROUND_USER, self.NUM_TIME_SLOTS))  # 随机初始化需求速率
+
     def initialize_ground(self):
         # 从CSV文件读取地面用户的仰角数据
-        df = pd.read_csv('data_ground.csv')
+        df = pd.read_csv('ev_data.csv')
         eval_angle = np.zeros((self.NUM_TIME_SLOTS, self.NUM_GROUND_USER, self.NUM_SATELLITES))
 
         # 填充 eval_angle 数组
-        for index, row in df.iterrows():
-            time_slot = int(row[0])
-            for i in range(self.NUM_GROUND_USER):
-                for j in range(self.NUM_SATELLITES):
-                    eval_angle[time_slot, i, j] = row[i * self.NUM_SATELLITES + j + 1]
+        for time_slot in range(self.NUM_TIME_SLOTS):
+            for i in range(self.NUM_SATELLITES):
+                for j in range(self.NUM_GROUND_USER):
+                    eval_angle[time_slot, j, i] = df.iloc[1 + i * self.NUM_GROUND_USER + j, time_slot]
 
         return eval_angle
 
     def initialize_satellite(self):
         # 从CSV文件读取卫星的高度数据
-        df = pd.read_csv('data_satellite.csv')
+        df = pd.read_csv('alt_data.csv')
         sat_heights = np.zeros((self.NUM_TIME_SLOTS, self.NUM_SATELLITES))
 
         # 填充 sat_heights 数组
-        for index, row in df.iterrows():
-            time_slot = int(row[0])
+        for time_slot in range(self.NUM_TIME_SLOTS):
             for i in range(self.NUM_SATELLITES):
-                sat_heights[time_slot, i] = row[i + 1]
+                sat_heights[time_slot, i] = df.iloc[1 + i, time_slot]
 
         return sat_heights
 
@@ -78,11 +82,11 @@ class Env(gym.Env):
         self.update_coverage_indicator(self.current_time_step)
 
         # 将一维动作数组转换为二维形式，用于表示每个用户选择的卫星
-        action_matrix = action.reshape((self.NUM_GROUND_USER, self.NUM_SATELLITES))
+        action_matrix = action.reshape((self.NUM_SATELLITES, self.NUM_GROUND_USER))
 
         # 检查并更新切换次数
         for user_index in range(self.NUM_GROUND_USER):
-            current_satellite = np.argmax(action_matrix[user_index])
+            current_satellite = np.argmax(action_matrix[:, user_index])
             if self.current_time_step > 0:
                 previous_satellite = np.argmax(self.access_decision[:, user_index, self.current_time_step - 1])
                 if current_satellite != previous_satellite:
@@ -91,11 +95,16 @@ class Env(gym.Env):
         # 根据action更新接入决策
         self.access_decision[:, :, self.current_time_step] = action_matrix
 
-        # 计算用户传输速率
+        # 计算用户传输速率和信道容量
         for user_index in range(self.NUM_GROUND_USER):
             for satellite_index in range(self.NUM_SATELLITES):
-                if action_matrix[user_index, satellite_index] == 1:
-                    self.user_rate[satellite_index, user_index, self.current_time_step] = self.calculate_CNR(
+                if action_matrix[satellite_index, user_index] == 1:
+                    CNR = self.calculate_CNR(self.current_time_step, user_index, satellite_index)
+                    INR = self.calculate_interference(self.current_time_step, user_index, satellite_index)
+                    self.channel_capacity[
+                        satellite_index, user_index, self.current_time_step] = self.total_bandwidth * np.log2(
+                        1 + CNR / (INR + 1))
+                    self.user_rate[satellite_index, user_index, self.current_time_step] = self.calculate_actual_rate(
                         self.current_time_step, user_index, satellite_index)
 
         # 计算奖励
@@ -116,7 +125,11 @@ class Env(gym.Env):
             'switch_count': self.switch_count.copy()
         }
 
-        return observation, reward, done, info
+        # 设置 terminated 和 truncated
+        terminated = done
+        truncated = False
+
+        return observation, reward, terminated, truncated, info
 
     def reset(self, *, seed: Optional[int] = None, return_info: bool = False, options: Optional[dict] = None):
         # 调用父类的reset方法以处理随机种子
@@ -135,13 +148,19 @@ class Env(gym.Env):
         # 重置用户传输速率
         self.user_rate = np.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER, self.NUM_TIME_SLOTS))
 
+        # 重置信道容量矩阵
+        self.channel_capacity = np.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER, self.NUM_TIME_SLOTS))
+
+        # 重置用户需求速率
+        self.user_demand_rate = np.random.uniform(1e6, 10e6, (self.NUM_GROUND_USER, self.NUM_TIME_SLOTS))  # 随机初始化需求速率
+
         # 获取初始观察
         observation = self.get_observation()
 
         if return_info:
             return observation, {'current_time_step': self.current_time_step}
         else:
-            return observation
+            return observation,{'false!!!'}
 
     def get_observation(self):
         # 假设观察是基于当前时间步的覆盖指示情况和切换次数
@@ -154,9 +173,9 @@ class Env(gym.Env):
     def calculate_reward(self, action_matrix):
         # 计算奖励
         reward = 0
-        for user_index in range(self.NUM_GROUND_USER):
-            for satellite_index in range(self.NUM_SATELLITES):
-                if action_matrix[user_index, satellite_index] == 1:
+        for satellite_index in range(self.NUM_SATELLITES):
+            for user_index in range(self.NUM_GROUND_USER):
+                if action_matrix[satellite_index, user_index] == 1:
                     # 计算用户传输速率
                     rate = self.user_rate[satellite_index, user_index, self.current_time_step]
                     # 检查是否满足最低CNR阈值
@@ -223,6 +242,15 @@ class Env(gym.Env):
                     self.coverage_indicator[satellite_index, user_index, current_time_slot] = 1
                 else:
                     self.coverage_indicator[satellite_index, user_index, current_time_slot] = 0
+
+    def calculate_actual_rate(self, time_slot, user_index, satellite_index):
+        capacity = self.channel_capacity[satellite_index, user_index, time_slot]
+        demand = self.user_demand_rate[user_index, time_slot]
+        # 计算实际传输速率
+        if demand <= capacity:
+            return demand
+        else:
+            return capacity
 
 
 if __name__ == "__main__":
