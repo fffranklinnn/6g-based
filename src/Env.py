@@ -36,15 +36,15 @@ class Env(gym.Env):
         self.angle_threshold = 15  # 单位：度
 
         # 初始化覆盖指示变量和接入决策变量
-        self.coverage_indicator = np.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER, self.TOTAL_TIME))
-        self.access_decision = np.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER, self.TOTAL_TIME))
+        self.coverage_indicator = np.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER, self.NUM_TIME_SLOTS))
+        self.access_decision = np.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER, self.NUM_TIME_SLOTS))
         self.current_time_step = 0
         self.w1 = 1  # 切换次数的权重
         self.w2 = 1  # 用户传输速率的权重
-        self.r_thr = -5  # 最低的CNR阈值，单位：dB
+        self.r_thr = -5  # 最低的CINR阈值，单位：dB
         self.switch_count = np.zeros(self.NUM_GROUND_USER)  # 每个用户的切换次数
         # 初始化用户传输速率矩阵
-        self.user_rate = np.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER, self.TOTAL_TIME))
+        self.user_rate = np.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER, self.NUM_TIME_SLOTS))
 
     def initialize_ground(self):
         # 从CSV文件读取地面用户的仰角数据
@@ -111,7 +111,10 @@ class Env(gym.Env):
         observation = self.get_observation()
 
         # 可选的额外信息
-        info = {}
+        info = {
+            'current_time_step': self.current_time_step,
+            'switch_count': self.switch_count.copy()
+        }
 
         return observation, reward, done, info
 
@@ -123,20 +126,20 @@ class Env(gym.Env):
         self.current_time_step = 0
 
         # 重置覆盖指示变量和接入决策变量
-        self.coverage_indicator = np.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER, self.TOTAL_TIME))
-        self.access_decision = np.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER, self.TOTAL_TIME))
+        self.coverage_indicator = np.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER, self.NUM_TIME_SLOTS))
+        self.access_decision = np.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER, self.NUM_TIME_SLOTS))
 
         # 重置切换次数
         self.switch_count = np.zeros(self.NUM_GROUND_USER)
 
         # 重置用户传输速率
-        self.user_rate = np.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER, self.TOTAL_TIME))
+        self.user_rate = np.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER, self.NUM_TIME_SLOTS))
 
         # 获取初始观察
         observation = self.get_observation()
 
         if return_info:
-            return observation, {}
+            return observation, {'current_time_step': self.current_time_step}
         else:
             return observation
 
