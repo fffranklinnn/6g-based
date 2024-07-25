@@ -1,7 +1,8 @@
 # train.py
 
 from env import Env
-from algorithm import RLAlgorithm
+# from PPO import RLAlgorithm
+from SAC import RLAlgorithm
 
 def main():
     # 创建环境

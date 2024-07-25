@@ -24,7 +24,7 @@ class Env(gym.Env):
         self.radius_earth = 6731e3  # 单位:m
 
         # 定义动作空间和观察空间
-        self.action_space = MultiBinary(self.NUM_GROUND_USER * self.NUM_SATELLITES)
+        self.action_space = MultiBinary(self.NUM_SATELLITES * self.NUM_GROUND_USER )
 
         # 调整观察空间以匹配实际的观察形状
         observation_shape = (self.NUM_SATELLITES * self.NUM_GROUND_USER + self.NUM_GROUND_USER,)

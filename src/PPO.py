@@ -1,4 +1,4 @@
-# algorithm.py
+# PPO.py
 
 from stable_baselines3 import PPO
 # from env import env
