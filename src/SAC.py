@@ -149,16 +149,22 @@ class SAC:
         self.target_critic2.load_state_dict(torch.load(filename + "_target_critic2"))
 
 
+def flatten_state_dict(state_dict):
+    state = []
+    for key in state_dict:
+        if isinstance(key, float):
+            key = f"{key:.2f}"  # 将浮点数键转换为字符串
+        value = state_dict[key]
+        if hasattr(value, 'flatten'):
+            state.append(value.flatten())
+        else:
+            print(f"Key: {key}, Value: {value}, Type: {type(value)}")
+    return np.concatenate(state)
+
+
 if __name__ == "__main__":
     env = Env()  # 确保你的环境类名和实例化方式正确
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    # 输出设备信息
-    if torch.cuda.is_available():
-        print("CUDA is available. Using GPU.")
-    else:
-        print("CUDA is not available. Using CPU.")
-    print(f"Device: {device}")
 
     # 获取 observation_space 和 action_space 的具体形状
     obs_space = env.observation_space
@@ -186,12 +192,15 @@ if __name__ == "__main__":
     for episode in range(num_episodes):
         state_dict, _ = env.reset()
         try:
-            state = np.concatenate(
-                [state_dict[key].flatten() for key in state_dict if hasattr(state_dict[key], 'flatten')])
+            state = flatten_state_dict(state_dict)
         except Exception as e:
             print(f"Error in flattening state_dict: {e}")
             for key in state_dict:
-                print(f"Key: {key}, Value: {state_dict[key]}, Type: {type(state_dict[key])}")
+                try:
+                    value = state_dict[key]
+                    print(f"Key: {key}, Value: {value}, Type: {type(value)}")
+                except Exception as inner_e:
+                    print(f"Error accessing key: {key} with exception: {inner_e}")
             raise e
 
         episode_reward = 0
@@ -201,12 +210,15 @@ if __name__ == "__main__":
             action = action[:action_dim]  # 确保动作维度与动作空间匹配
             next_state_dict, reward, done, _, _ = env.step(action)
             try:
-                next_state = np.concatenate([next_state_dict[key].flatten() for key in next_state_dict if
-                                             hasattr(next_state_dict[key], 'flatten')])
+                next_state = flatten_state_dict(next_state_dict)
             except Exception as e:
                 print(f"Error in flattening next_state_dict: {e}")
                 for key in next_state_dict:
-                    print(f"Key: {key}, Value: {next_state_dict[key]}, Type: {type(next_state_dict[key])}")
+                    try:
+                        value = next_state_dict[key]
+                        print(f"Key: {key}, Value: {value}, Type: {type(value)}")
+                    except Exception as inner_e:
+                        print(f"Error accessing key: {key} with exception: {inner_e}")
                 raise e
 
             not_done = 1.0 if not done else 0.0
