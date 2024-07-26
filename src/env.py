@@ -3,6 +3,7 @@ import pandas as pd
 import torch
 from typing import Optional, Tuple
 
+
 class Env:
     def __init__(self):
         super(Env, self).__init__()
@@ -22,7 +23,8 @@ class Env:
         self.radius_earth = 6731e3  # 单位:m
 
         # 定义动作空间和观察空间
-        self.action_space = torch.zeros(self.NUM_SATELLITES * self.NUM_GROUND_USER, dtype=torch.int)  # 动作空间的形状：300*10，每个卫星选择对哪个地面站进行接入
+        self.action_space = torch.zeros(self.NUM_SATELLITES * self.NUM_GROUND_USER,
+                                        dtype=torch.int)  # 动作空间的形状：300*10，每个卫星选择对哪个地面站进行接入
 
         # 调整观察空间以匹配实际的观察形状
         self.coverage_space = torch.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER), dtype=torch.int)
@@ -44,21 +46,26 @@ class Env:
         self.angle_threshold = 15  # 单位：度
 
         # 初始化覆盖指示变量和接入决策变量
-        self.coverage_indicator = torch.zeros((self.NUM_TIME_SLOTS, self.NUM_GROUND_USER, self.NUM_SATELLITES), dtype=torch.int)
-        self.access_decision = torch.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER, self.NUM_TIME_SLOTS), dtype=torch.int)
+        self.coverage_indicator = torch.zeros((self.NUM_TIME_SLOTS, self.NUM_GROUND_USER, self.NUM_SATELLITES),
+                                              dtype=torch.int)
+        self.access_decision = torch.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER, self.NUM_TIME_SLOTS),
+                                           dtype=torch.int)
         self.current_time_step = 0
         self.w1 = 1  # 切换次数的权重
         self.w2 = 1  # 用户传输速率的权重
         self.r_thr = -5  # 最低的CINR阈值，单位：dB
         self.switch_count = torch.zeros(self.NUM_GROUND_USER, dtype=torch.int)  # 每个用户的切换次数
         # 初始化用户传输速率矩阵
-        self.user_rate = torch.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER, self.NUM_TIME_SLOTS), dtype=torch.float32)
+        self.user_rate = torch.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER, self.NUM_TIME_SLOTS),
+                                     dtype=torch.float32)
 
         # 初始化信道容量矩阵
-        self.channel_capacity = torch.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER, self.NUM_TIME_SLOTS), dtype=torch.float32)
+        self.channel_capacity = torch.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER, self.NUM_TIME_SLOTS),
+                                            dtype=torch.float32)
 
         # 初始化用户需求速率
-        self.user_demand_rate = torch.tensor(np.random.uniform(1e6, 10e6, (self.NUM_GROUND_USER, self.NUM_TIME_SLOTS)), dtype=torch.float32)  # 随机初始化需求速率
+        self.user_demand_rate = torch.tensor(np.random.uniform(1e6, 10e6, (self.NUM_GROUND_USER, self.NUM_TIME_SLOTS)),
+                                             dtype=torch.float32)  # 随机初始化需求速率
 
         print("Environment initialized")
 
@@ -87,7 +94,7 @@ class Env:
 
         return sat_heights
 
-    def step(self, action: torch.Tensor) -> Tuple[torch.Tensor, float, bool, bool, dict]:
+    def step(self, action: torch.Tensor) -> Tuple[torch.Tensor, float, bool, dict]:
         # 检查是否已经达到最大时间步数
         if self.current_time_step >= self.NUM_TIME_SLOTS:
             is_done = True
@@ -97,7 +104,7 @@ class Env:
                 'current_time_step': self.current_time_step,
                 'switch_count': self.switch_count.clone()
             }
-            return observation, reward, is_done, False, information
+            return observation, reward, is_done, information
 
         # 更新覆盖指示变量
         self.update_coverage_indicator(self.current_time_step)
@@ -124,7 +131,7 @@ class Env:
                     INR = self.calculate_interference(self.current_time_step, user_index, satellite_index)
                     self.channel_capacity[
                         satellite_index, user_index, self.current_time_step] = self.total_bandwidth * torch.log2(
-                        1 + CNR / (INR + 1))
+                        torch.tensor(1.0) + CNR / (INR + torch.tensor(1.0)))
                     self.user_rate[satellite_index, user_index, self.current_time_step] = self.calculate_actual_rate(
                         self.current_time_step, user_index, satellite_index)
 
@@ -151,29 +158,34 @@ class Env:
 
         # 设置 terminated 和 truncated
         is_terminated = is_done
-        is_truncated = False
+        # is_truncated = False
 
-        return observation, reward, is_terminated, is_truncated, information
+        return observation, reward, is_terminated, information
 
     def reset(self, *, seed: Optional[int] = None, options: Optional[dict] = None) -> Tuple[torch.Tensor, dict]:
         # 重置当前时间步
         self.current_time_step = 0
 
         # 重置覆盖指示变量和接入决策变量
-        self.coverage_indicator = torch.zeros((self.NUM_TIME_SLOTS, self.NUM_GROUND_USER, self.NUM_SATELLITES), dtype=torch.int)
-        self.access_decision = torch.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER, self.NUM_TIME_SLOTS), dtype=torch.int)
+        self.coverage_indicator = torch.zeros((self.NUM_TIME_SLOTS, self.NUM_GROUND_USER, self.NUM_SATELLITES),
+                                              dtype=torch.int)
+        self.access_decision = torch.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER, self.NUM_TIME_SLOTS),
+                                           dtype=torch.int)
 
         # 重置切换次数
         self.switch_count = torch.zeros(self.NUM_GROUND_USER, dtype=torch.int)
 
         # 重置用户传输速率
-        self.user_rate = torch.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER, self.NUM_TIME_SLOTS), dtype=torch.float32)
+        self.user_rate = torch.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER, self.NUM_TIME_SLOTS),
+                                     dtype=torch.float32)
 
         # 重置信道容量矩阵
-        self.channel_capacity = torch.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER, self.NUM_TIME_SLOTS), dtype=torch.float32)
+        self.channel_capacity = torch.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER, self.NUM_TIME_SLOTS),
+                                            dtype=torch.float32)
 
         # 重置用户需求速率
-        self.user_demand_rate = torch.tensor(np.random.uniform(1e6, 10e6, (self.NUM_GROUND_USER, self.NUM_TIME_SLOTS)), dtype=torch.float32)  # 随机初始化需求速率
+        self.user_demand_rate = torch.tensor(np.random.uniform(1e6, 10e6, (self.NUM_GROUND_USER, self.NUM_TIME_SLOTS)),
+                                             dtype=torch.float32)  # 随机初始化需求速率
 
         # 获取初始观察
         observation = self.get_observation()
@@ -181,9 +193,14 @@ class Env:
         return observation, {'current_time_step': self.current_time_step}
 
     def get_observation(self) -> torch.Tensor:
+        if self.current_time_step >= len(self.coverage_indicator):
+            # 返回一个默认的观察值，而不是抛出异常
+            return torch.zeros(self.get_observation_shape())
+
         coverage = self.coverage_indicator[self.current_time_step].flatten().float()
-        previous_access_strategy = self.access_decision[:, :, self.current_time_step - 1].flatten().float() if self.current_time_step > 0 else torch.zeros(
-                (self.NUM_SATELLITES, self.NUM_GROUND_USER)).flatten().float()
+        previous_access_strategy = self.access_decision[:, :,
+                                   self.current_time_step - 1].flatten().float() if self.current_time_step > 0 else torch.zeros(
+            (self.NUM_SATELLITES, self.NUM_GROUND_USER)).flatten().float()
         switch_count = self.switch_count.float()
         elevation_angles = self.eval_angle[self.current_time_step].flatten().float()
         altitudes = self.satellite_heights[self.current_time_step].float()
@@ -193,7 +210,13 @@ class Env:
 
     def get_observation_shape(self):
         # 获取展平后的观察空间的形状
-        return self.get_observation().shape
+        return torch.cat([
+            self.coverage_indicator[0].flatten().float(),
+            torch.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER)).flatten().float(),
+            self.switch_count.float(),
+            self.eval_angle[0].flatten().float(),
+            self.satellite_heights[0].float()
+        ]).shape
 
     def calculate_reward(self, action_matrix: torch.Tensor) -> float:
         # 计算奖励
@@ -217,12 +240,13 @@ class Env:
         eval_angle = self.eval_angle[time_slot, user_index, satellite_index]
         # 计算距离
         result = self.radius_earth * (self.radius_earth + sat_height) / torch.sqrt(
-            torch.pow((self.radius_earth + sat_height), 2) - self.radius_earth ** 2 * torch.cos(torch.radians(eval_angle)) ** 2)
+            torch.pow((self.radius_earth + sat_height), 2) - self.radius_earth ** 2 * torch.cos(
+                torch.deg2rad(eval_angle)) ** 2)
         return result.item()
 
     def calculate_DL_pathloss(self, time_slot: int, user_index: int, satellite_index: int) -> float:
-        distance = self.calculate_distance(time_slot, user_index, satellite_index)
-        result = 20 * torch.log10(distance) + 20 * torch.log10(self.communication_frequency) - 147.55
+        distance = torch.tensor(self.calculate_distance(time_slot, user_index, satellite_index))
+        result = 20 * torch.log10(distance) + 20 * torch.log10(torch.tensor(self.communication_frequency)) - 147.55
         return result.item()
 
     def calculate_CNR(self, time_slot: int, user_index: int, satellite_index: int) -> float:
@@ -291,12 +315,12 @@ class Env:
         pass
 
 
-if __name__ == "__main__":
-    env = Env()
-    # 打印动作空间和观察空间的形式
-    print("Action Space:")
-    print(env.action_space.shape)
-
-    print("\nObservation Space:")
-    for key, space in env.observation_space.items():
-        print(f"{key}: {space.shape}")
+# if __name__ == "__main__":
+#     env = Env()
+#     # 打印动作空间和观察空间的形式
+#     print("Action Space:")
+#     print(env.action_space.shape)
+#
+#     print("\nObservation Space:")
+#     for key, space in env.observation_space.items():
+#         print(f"{key}: {space.shape}")
