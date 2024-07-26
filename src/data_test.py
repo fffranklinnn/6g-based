@@ -1,7 +1,7 @@
 # data_test.py
 
 import numpy as np
-from env import Env
+from env_gym import Env
 
 
 def test_initialize_ground():

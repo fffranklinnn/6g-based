@@ -6,7 +6,7 @@ import gymnasium as gym
 from stable_baselines3.common.buffers import ReplayBuffer
 from stable_baselines3.common.noise import NormalActionNoise
 from stable_baselines3.common.env_util import make_vec_env
-from env import Env  # 确保你的环境文件名和类名正确
+from env_gym import Env  # 确保你的环境文件名和类名正确
 from gymnasium.spaces import MultiBinary, MultiDiscrete, Box, Dict
 
 

@@ -1,5 +1,5 @@
 import numpy as np
-from env import Env  # 请确保将 your_env_module 替换为你实际的模块名
+from env_gym import Env  # 请确保将 your_env_module 替换为你实际的模块名
 
 
 def test_env():

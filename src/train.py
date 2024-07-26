@@ -1,6 +1,6 @@
 # train.py
 
-from env import Env
+from env_gym import Env
 # from PPO import RLAlgorithm
 from SAC import RLAlgorithm
 

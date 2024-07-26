@@ -65,6 +65,8 @@ class Env(gym.Env):
         # 初始化用户需求速率
         self.user_demand_rate = np.random.uniform(1e6, 10e6, (self.NUM_GROUND_USER, self.NUM_TIME_SLOTS))  # 随机初始化需求速率
 
+        print("Environment initialized")
+
     def initialize_angle(self):
         # 从CSV文件读取地面用户的仰角数据
         df = pd.read_csv('ev_data.csv')
