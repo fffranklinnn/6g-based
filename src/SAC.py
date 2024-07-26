@@ -2,13 +2,9 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import gymnasium as gym
-from stable_baselines3.common.buffers import ReplayBuffer
-from stable_baselines3.common.noise import NormalActionNoise
-from stable_baselines3.common.env_util import make_vec_env
-from env_gym import Env  # 确保你的环境文件名和类名正确
-from gymnasium.spaces import MultiBinary, MultiDiscrete, Box, Dict
-
+from collections import deque
+import random
+from env import Env  # 确保你的环境文件名和类名正确
 
 class Actor(nn.Module):
     def __init__(self, state_dim, action_dim, max_action):
@@ -23,7 +19,6 @@ class Actor(nn.Module):
         a = torch.relu(self.l2(a))
         return self.max_action * torch.tanh(self.l3(a))
 
-
 class Critic(nn.Module):
     def __init__(self, state_dim, action_dim):
         super(Critic, self).__init__()
@@ -32,13 +27,34 @@ class Critic(nn.Module):
         self.l3 = nn.Linear(256, 1)
 
     def forward(self, state, action):
-        q = torch.relu(self.l1(torch.cat([state, action], 1)))
+        q = torch.relu(self.l1(torch.cat([state, action], dim=1)))
         q = torch.relu(self.l2(q))
         return self.l3(q)
 
+class ReplayBuffer:
+    def __init__(self, max_size, state_dim, action_dim):
+        self.buffer = deque(maxlen=max_size)
+        self.state_dim = state_dim
+        self.action_dim = action_dim
+
+    def add(self, state, action, next_state, reward, not_done):
+        self.buffer.append((state, action, next_state, reward, not_done))
+
+    def sample(self, batch_size):
+        batch = random.sample(self.buffer, batch_size)
+        state, action, next_state, reward, not_done = zip(*batch)
+        state = torch.FloatTensor(np.array(state)).to(device)
+        action = torch.FloatTensor(np.array(action)).to(device)
+        next_state = torch.FloatTensor(np.array(next_state)).to(device)
+        reward = torch.FloatTensor(np.array(reward)).unsqueeze(1).to(device)
+        not_done = torch.FloatTensor(np.array(not_done)).unsqueeze(1).to(device)
+        return state, action, next_state, reward, not_done
+
+    def __len__(self):
+        return len(self.buffer)
 
 class SAC:
-    def __init__(self, state_dim, action_dim, max_action, env):
+    def __init__(self, state_dim, action_dim, max_action):
         self.actor = Actor(state_dim, action_dim, max_action).to(device)
         self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=3e-4)
 
@@ -52,56 +68,20 @@ class SAC:
         self.target_critic1.load_state_dict(self.critic1.state_dict())
         self.target_critic2.load_state_dict(self.critic2.state_dict())
 
-        # 确保 observation_space 和 action_space 的 dtype 是正确的
-        if isinstance(env.observation_space, Box):
-            env.observation_space.dtype = np.float32
-        if isinstance(env.action_space, Box):
-            env.action_space.dtype = np.float32
-
-        # 展平 observation_space
-        if isinstance(env.observation_space, Dict):
-            low = []
-            high = []
-            for space in env.observation_space.spaces.values():
-                if isinstance(space, Box):
-                    low.append(space.low.flatten())
-                    high.append(space.high.flatten())
-                elif isinstance(space, MultiBinary):
-                    low.append(np.zeros(space.n, dtype=np.float32))
-                    high.append(np.ones(space.n, dtype=np.float32))
-                elif isinstance(space, MultiDiscrete):
-                    low.append(np.zeros(space.nvec.shape, dtype=np.float32).flatten())
-                    high.append((space.nvec - 1).astype(np.float32).flatten())
-                else:
-                    raise NotImplementedError(f"Unsupported space type: {type(space)}")
-            low = np.concatenate([x.flatten() for x in low])
-            high = np.concatenate([x.flatten() for x in high])
-            flat_obs_space = Box(
-                low=low,
-                high=high,
-                dtype=np.float32
-            )
-        else:
-            flat_obs_space = env.observation_space
-
-        self.replay_buffer = ReplayBuffer(
-            buffer_size=100000,  # 调整为较小的值，例如 100000
-            observation_space=flat_obs_space,
-            action_space=env.action_space,
-            device=device,
-            optimize_memory_usage=False,
-            handle_timeout_termination=False  # 确保与 optimize_memory_usage 兼容
-        )
+        self.replay_buffer = ReplayBuffer(max_size=100000, state_dim=state_dim, action_dim=action_dim)
         self.max_action = max_action
         self.discount = 0.99
         self.tau = 0.005
         self.alpha = 0.2
 
     def select_action(self, state):
-        state = torch.FloatTensor(state.reshape(1, -1)).to(device)
-        return self.actor(state).cpu().data.numpy().flatten()
+        with torch.no_grad():
+            return self.actor(state).cpu()
 
     def train(self, batch_size=256):
+        if len(self.replay_buffer) < batch_size:
+            return
+
         state, action, next_state, reward, not_done = self.replay_buffer.sample(batch_size)
 
         with torch.no_grad():
@@ -148,87 +128,42 @@ class SAC:
         self.target_critic1.load_state_dict(torch.load(filename + "_target_critic1"))
         self.target_critic2.load_state_dict(torch.load(filename + "_target_critic2"))
 
-
-def flatten_state_dict(state_dict):
-    state = []
-    for key in state_dict:
-        if isinstance(key, float):
-            key = f"{key:.2f}"  # 将浮点数键转换为字符串
-        value = state_dict[key]
-        if hasattr(value, 'flatten'):
-            state.append(value.flatten())
-        else:
-            print(f"Key: {key}, Value: {value}, Type: {type(value)}")
-    return np.concatenate(state)
-
+def flatten_state(state):
+    return state.flatten()
 
 if __name__ == "__main__":
-    env = Env()  # 确保你的环境类名和实例化方式正确
+    env = Env()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # 获取 observation_space 和 action_space 的具体形状
-    obs_space = env.observation_space
-    act_space = env.action_space
-
-    # 计算 state_dim 和 action_dim
-    if isinstance(obs_space, Dict):
-        state_dim = sum([np.prod(space.shape) for space in obs_space.spaces.values()])
-    else:
-        state_dim = np.prod(obs_space.shape)
-
-    if isinstance(act_space, MultiBinary):
-        action_dim = act_space.n
-    else:
-        action_dim = np.prod(act_space.shape)
-
+    state_dim = env.get_observation_shape()[0]
+    action_dim = env.action_space.numel()  # 确保获取正确的动作维度
     max_action = 1  # 对于 MultiBinary 动作空间，最大值为1
 
-    sac = SAC(state_dim, action_dim, max_action, env)
+    sac = SAC(state_dim, action_dim, max_action)
 
     num_episodes = 1000
     max_timesteps = 200
     batch_size = 256
 
     for episode in range(num_episodes):
-        state_dict, _ = env.reset()
-        try:
-            state = flatten_state_dict(state_dict)
-        except Exception as e:
-            print(f"Error in flattening state_dict: {e}")
-            for key in state_dict:
-                try:
-                    value = state_dict[key]
-                    print(f"Key: {key}, Value: {value}, Type: {type(value)}")
-                except Exception as inner_e:
-                    print(f"Error accessing key: {key} with exception: {inner_e}")
-            raise e
+        state, _ = env.reset()
+        state = torch.FloatTensor(flatten_state(state)).to(device)  # 确保状态在正确的设备上并平整化
 
         episode_reward = 0
 
         for t in range(max_timesteps):
             action = sac.select_action(state)
-            action = action[:action_dim]  # 确保动作维度与动作空间匹配
-            next_state_dict, reward, done, _, _ = env.step(action)
-            try:
-                next_state = flatten_state_dict(next_state_dict)
-            except Exception as e:
-                print(f"Error in flattening next_state_dict: {e}")
-                for key in next_state_dict:
-                    try:
-                        value = next_state_dict[key]
-                        print(f"Key: {key}, Value: {value}, Type: {type(value)}")
-                    except Exception as inner_e:
-                        print(f"Error accessing key: {key} with exception: {inner_e}")
-                raise e
+            action = torch.clamp(action, 0, 1).to(device)  # 确保动作在有效范围内并保持为tensor
+            next_state, reward, done, _ = env.step(action)  # 直接传递tensor
+            next_state = torch.FloatTensor(flatten_state(next_state)).to(device)  # 平整并移至正确的设备
 
             not_done = 1.0 if not done else 0.0
 
-            sac.replay_buffer.add(state, action, next_state, reward, not_done)
+            sac.replay_buffer.add(state.cpu().numpy(), action.cpu().numpy(), next_state.cpu().numpy(), reward, not_done)  # 处理设备转移问题
             state = next_state
             episode_reward += reward
 
-            if len(sac.replay_buffer) > batch_size:
-                sac.train(batch_size)
+            sac.train(batch_size)
 
             if done:
                 break
