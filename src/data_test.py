@@ -6,7 +6,7 @@ from env import Env
 
 def test_initialize_ground():
     env = Env()
-    eval_angle = env.initialize_ground()
+    eval_angle = env.initialize_angle()
 
     # 检查 eval_angle 的形状是否正确
     assert eval_angle.shape == (env.NUM_TIME_SLOTS, env.NUM_GROUND_USER, env.NUM_SATELLITES), \
@@ -24,7 +24,7 @@ def test_initialize_ground():
 
 def test_initialize_satellite():
     env = Env()
-    sat_heights = env.initialize_satellite()
+    sat_heights = env.initialize_altitude()
 
     # 检查 sat_heights 的形状是否正确
     assert sat_heights.shape == (env.NUM_TIME_SLOTS, env.NUM_SATELLITES), \

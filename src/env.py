@@ -1,13 +1,14 @@
 import numpy as np
-import gym
+import gymnasium as gym
 import pandas as pd
-from gym import spaces
-from gym.spaces import Box, MultiBinary
-from typing import Optional
+from gymnasium import spaces
+from gymnasium.spaces import Box, MultiBinary
+from typing import Optional, Tuple
 
 
 class Env(gym.Env):
     def __init__(self):
+        super(Env, self).__init__()
         # 定义卫星和用户的数量
         self.NUM_SATELLITES = 300  # 卫星数量
         self.NUM_GROUND_USER = 10  # 地面用户数量
@@ -24,15 +25,27 @@ class Env(gym.Env):
         self.radius_earth = 6731e3  # 单位:m
 
         # 定义动作空间和观察空间
-        self.action_space = MultiBinary(self.NUM_SATELLITES * self.NUM_GROUND_USER )
+        self.action_space = MultiBinary(self.NUM_SATELLITES * self.NUM_GROUND_USER)  # 动作空间的形状：300*10，每个卫星选择对哪个地面站进行接入
 
         # 调整观察空间以匹配实际的观察形状
-        observation_shape = (self.NUM_SATELLITES * self.NUM_GROUND_USER + self.NUM_GROUND_USER,)
-        self.observation_space = spaces.Box(low=-1, high=1, shape=observation_shape, dtype=np.float32)
+        observation_shape = (self.NUM_SATELLITES * self.NUM_GROUND_USER + self.NUM_GROUND_USER,)  # 观察空间应该至少包括：卫星对用户的覆盖，
+        self.coverage_space = spaces.MultiBinary((self.NUM_SATELLITES, self.NUM_GROUND_USER))
+        self.previous_access_strategy_space = spaces.MultiBinary((self.NUM_SATELLITES, self.NUM_GROUND_USER))
+        self.switch_count_space = spaces.Discrete(100)  # 假设最大切换次数为100
+        self.elevation_angle_space = spaces.Box(low=0, high=90, shape=(self.NUM_SATELLITES, self.NUM_GROUND_USER),
+                                                dtype=np.float32)
+        self.altitude_space = spaces.Box(low=0, high=10000, shape=(self.NUM_SATELLITES,), dtype=np.float32)
+        self.observation_space = spaces.Dict({
+            "coverage": self.coverage_space,
+            "previous_access_strategy": self.previous_access_strategy_space,
+            "switch_count": spaces.MultiDiscrete([self.switch_count_space.n] * self.NUM_GROUND_USER),
+            "elevation_angles": self.elevation_angle_space,
+            "altitudes": self.altitude_space
+        })
 
         # 初始化卫星和用户的位置
-        self.satellite_heights = self.initialize_satellite()
-        self.eval_angle = self.initialize_ground()
+        self.satellite_heights = self.initialize_altitude()
+        self.eval_angle = self.initialize_angle()
         self.angle_threshold = 15  # 单位：度
 
         # 初始化覆盖指示变量和接入决策变量
@@ -52,7 +65,7 @@ class Env(gym.Env):
         # 初始化用户需求速率
         self.user_demand_rate = np.random.uniform(1e6, 10e6, (self.NUM_GROUND_USER, self.NUM_TIME_SLOTS))  # 随机初始化需求速率
 
-    def initialize_ground(self):
+    def initialize_angle(self):
         # 从CSV文件读取地面用户的仰角数据
         df = pd.read_csv('ev_data.csv')
         eval_angle = np.zeros((self.NUM_TIME_SLOTS, self.NUM_GROUND_USER, self.NUM_SATELLITES))
@@ -65,7 +78,7 @@ class Env(gym.Env):
 
         return eval_angle
 
-    def initialize_satellite(self):
+    def initialize_altitude(self):
         # 从CSV文件读取卫星的高度数据
         df = pd.read_csv('alt_data.csv')
         sat_heights = np.zeros((self.NUM_TIME_SLOTS, self.NUM_SATELLITES))
@@ -77,7 +90,7 @@ class Env(gym.Env):
 
         return sat_heights
 
-    def step(self, action):
+    def step(self, action: np.ndarray) -> Tuple[np.ndarray, float, bool, bool, dict]:
         # 更新覆盖指示变量
         self.update_coverage_indicator(self.current_time_step)
 
@@ -114,24 +127,24 @@ class Env(gym.Env):
         self.current_time_step += 1
 
         # 检查是否结束
-        done = self.current_time_step >= self.NUM_TIME_SLOTS
+        is_done = self.current_time_step >= self.NUM_TIME_SLOTS
 
         # 获取当前环境的观察
         observation = self.get_observation()
 
         # 可选的额外信息
-        info = {
+        information = {
             'current_time_step': self.current_time_step,
             'switch_count': self.switch_count.copy()
         }
 
         # 设置 terminated 和 truncated
-        terminated = done
-        truncated = False
+        is_terminated = is_done
+        is_truncated = False
 
-        return observation, reward, terminated, truncated, info
+        return observation, reward, is_terminated, is_truncated, information
 
-    def reset(self, *, seed: Optional[int] = None, return_info: bool = False, options: Optional[dict] = None):
+    def reset(self, *, seed: Optional[int] = None, options: Optional[dict] = None) -> Tuple[np.ndarray, dict]:
         # 调用父类的reset方法以处理随机种子
         super().reset(seed=seed)
 
@@ -157,20 +170,21 @@ class Env(gym.Env):
         # 获取初始观察
         observation = self.get_observation()
 
-        if return_info:
-            return observation, {'current_time_step': self.current_time_step}
-        else:
-            return observation,{'false!!!'}
+        return observation, {'current_time_step': self.current_time_step}
 
-    def get_observation(self):
-        # 假设观察是基于当前时间步的覆盖指示情况和切换次数
-        observation = np.concatenate([
-            self.coverage_indicator[:, :, self.current_time_step].flatten(),
-            self.switch_count
-        ])
+    def get_observation(self) -> dict:
+        observation = {
+            "coverage": self.coverage_indicator[:, :, self.current_time_step],
+            "previous_access_strategy": self.access_decision[:, :,
+                                        self.current_time_step - 1] if self.current_time_step > 0 else np.zeros(
+                (self.NUM_SATELLITES, self.NUM_GROUND_USER)),
+            "switch_count": self.switch_count,
+            "elevation_angles": self.eval_angle[self.current_time_step],
+            "altitudes": self.satellite_heights[self.current_time_step]
+        }
         return observation
 
-    def calculate_reward(self, action_matrix):
+    def calculate_reward(self, action_matrix: np.ndarray) -> float:
         # 计算奖励
         reward = 0
         for satellite_index in range(self.NUM_SATELLITES):
@@ -186,7 +200,7 @@ class Env(gym.Env):
 
         return reward
 
-    def calculate_distance(self, time_slot, user_index, satellite_index):
+    def calculate_distance(self, time_slot: int, user_index: int, satellite_index: int) -> float:
         # 使用指定时间槽的卫星高度和俯仰角
         sat_height = self.satellite_heights[time_slot, satellite_index]
         eval_angle = self.eval_angle[time_slot, user_index, satellite_index]
@@ -195,12 +209,12 @@ class Env(gym.Env):
             np.pow((self.radius_earth + sat_height), 2) - self.radius_earth ** 2 * np.cos(np.radians(eval_angle)) ** 2)
         return result
 
-    def calculate_DL_pathloss(self, time_slot, user_index, satellite_index):
+    def calculate_DL_pathloss(self, time_slot: int, user_index: int, satellite_index: int) -> float:
         distance = self.calculate_distance(time_slot, user_index, satellite_index)
         result = 20 * np.log10(distance) + 20 * np.log10(self.communication_frequency) - 147.55
         return result
 
-    def calculate_CNR(self, time_slot, user_index, satellite_index):
+    def calculate_CNR(self, time_slot: int, user_index: int, satellite_index: int) -> float:
         loss = self.calculate_DL_pathloss(time_slot, user_index, satellite_index)
         EIRP_watts = 10 ** ((self.EIRP - 30) / 10)  # 将 EIRP 从 dBm 转换为瓦特
         noise_power = self.k * self.noise_temperature * self.total_bandwidth  # 噪声功率计算
@@ -209,7 +223,7 @@ class Env(gym.Env):
         result = 10 * np.log10(CNR_linear)  # 转换为 dB
         return result
 
-    def calculate_interference(self, time_slot, user_index, accessed_satellite_index):
+    def calculate_interference(self, time_slot: int, user_index: int, accessed_satellite_index: int) -> float:
         # 初始化总干扰功率为0
         total_interference_power_watts = 0
 
@@ -234,7 +248,7 @@ class Env(gym.Env):
         # 返回总干扰功率的 dBm 值
         return total_interference_dBm
 
-    def update_coverage_indicator(self, current_time_slot):
+    def update_coverage_indicator(self, current_time_slot: int):
         for user_index in range(self.NUM_GROUND_USER):
             for satellite_index in range(self.NUM_SATELLITES):
                 # 检查俯仰角是否大于限定值
@@ -243,15 +257,36 @@ class Env(gym.Env):
                 else:
                     self.coverage_indicator[satellite_index, user_index, current_time_slot] = 0
 
-    def calculate_actual_rate(self, time_slot, user_index, satellite_index):
+    def calculate_actual_rate(self, time_slot: int, user_index: int, satellite_index: int) -> float:
         capacity = self.channel_capacity[satellite_index, user_index, time_slot]
         demand = self.user_demand_rate[user_index, time_slot]
         # 计算实际传输速率
         if demand <= capacity:
-            return demand
+            return demand.item()
         else:
-            return capacity
+            return capacity.item()
+
+    def render(self, mode='human'):
+        """
+        渲染环境。
+        """
+        # 示例：打印当前时间步
+        print(f"Current time step: {self.current_time_step}")
+
+    def close(self):
+        """
+        关闭环境。
+        """
+        pass
 
 
 if __name__ == "__main__":
     env = Env()
+    obs, info = env.reset()
+    done = False
+    while not done:
+        action = env.action_space.sample()
+        obs, reward, terminated, truncated, info = env.step(action)
+        env.render()
+        done = terminated or truncated
+    env.close()
