@@ -2,13 +2,12 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-# import gym
+import gymnasium as gym
 from stable_baselines3.common.buffers import ReplayBuffer
-from env import Env
-from gymnasium.spaces import MultiBinary, MultiDiscrete, Box, Dict
 from stable_baselines3.common.noise import NormalActionNoise
 from stable_baselines3.common.env_util import make_vec_env
-
+from env import Env  # 确保你的环境文件名和类名正确
+from gymnasium.spaces import MultiBinary, MultiDiscrete, Box, Dict
 
 class Actor(nn.Module):
     def __init__(self, state_dim, action_dim, max_action):
@@ -23,7 +22,6 @@ class Actor(nn.Module):
         a = torch.relu(self.l2(a))
         return self.max_action * torch.tanh(self.l3(a))
 
-
 class Critic(nn.Module):
     def __init__(self, state_dim, action_dim):
         super(Critic, self).__init__()
@@ -36,9 +34,8 @@ class Critic(nn.Module):
         q = torch.relu(self.l2(q))
         return self.l3(q)
 
-
 class SAC:
-    def __init__(self, state_dim, action_dim, max_action):
+    def __init__(self, state_dim, action_dim, max_action, env):
         self.actor = Actor(state_dim, action_dim, max_action).to(device)
         self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=3e-4)
 
@@ -52,7 +49,44 @@ class SAC:
         self.target_critic1.load_state_dict(self.critic1.state_dict())
         self.target_critic2.load_state_dict(self.critic2.state_dict())
 
-        self.replay_buffer = ReplayBuffer(buffer_size=1000000, observation_space=env.observation_space, action_space=env.action_space, device=device, optimize_memory_usage=False)
+        # 确保 observation_space 和 action_space 的 dtype 是正确的
+        if isinstance(env.observation_space, Box):
+            env.observation_space.dtype = np.float32
+        if isinstance(env.action_space, Box):
+            env.action_space.dtype = np.float32
+
+        # 展平 observation_space
+        if isinstance(env.observation_space, Dict):
+            low = []
+            high = []
+            for space in env.observation_space.spaces.values():
+                if isinstance(space, Box):
+                    low.append(space.low.flatten())
+                    high.append(space.high.flatten())
+                elif isinstance(space, MultiBinary):
+                    low.append(np.zeros(space.n, dtype=np.float32))
+                    high.append(np.ones(space.n, dtype=np.float32))
+                elif isinstance(space, MultiDiscrete):
+                    low.append(np.zeros(space.nvec.shape, dtype=np.float32))
+                    high.append(space.nvec.astype(np.float32) - 1)
+                else:
+                    raise NotImplementedError(f"Unsupported space type: {type(space)}")
+            flat_obs_space = Box(
+                low=np.concatenate(low),
+                high=np.concatenate(high),
+                dtype=np.float32
+            )
+        else:
+            flat_obs_space = env.observation_space
+
+        self.replay_buffer = ReplayBuffer(
+            buffer_size=1000000,
+            observation_space=flat_obs_space,
+            action_space=env.action_space,
+            device=device,
+            optimize_memory_usage=False,
+            handle_timeout_termination=False  # 确保与 optimize_memory_usage 兼容
+        )
         self.max_action = max_action
         self.discount = 0.99
         self.tau = 0.005
@@ -109,7 +143,6 @@ class SAC:
         self.target_critic1.load_state_dict(torch.load(filename + "_target_critic1"))
         self.target_critic2.load_state_dict(torch.load(filename + "_target_critic2"))
 
-
 if __name__ == "__main__":
     env = Env()  # 确保你的环境类名和实例化方式正确
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -138,20 +171,23 @@ if __name__ == "__main__":
 
     max_action = 1  # 对于 MultiBinary 动作空间，最大值为1
 
-    sac = SAC(state_dim, action_dim, max_action)
+    sac = SAC(state_dim, action_dim, max_action, env)
 
     num_episodes = 1000
     max_timesteps = 200
     batch_size = 256
 
     for episode in range(num_episodes):
-        state, _ = env.reset()
+        state_dict, _ = env.reset()
+        state = np.concatenate([state_dict[key].flatten() for key in state_dict])  # 将观察空间展平为一个向量
         episode_reward = 0
 
         for t in range(max_timesteps):
             action = sac.select_action(state)
             action = action[:action_dim]  # 确保动作维度与动作空间匹配
-            next_state, reward, done, _, _ = env.step(action)
+            next_state_dict, reward, done, _, _ = env.step(action)
+            next_state = np.concatenate([next_state_dict[key].flatten() for key in next_state_dict])  # 展平下一状态
+
             not_done = 1.0 if not done else 0.0
 
             sac.replay_buffer.add(state, action, next_state, reward, not_done)
@@ -168,3 +204,5 @@ if __name__ == "__main__":
 
         if (episode + 1) % 100 == 0:
             sac.save(f"sac_checkpoint_{episode + 1}")
+
+    env.close()

@@ -44,8 +44,8 @@ class Env(gym.Env):
         })
 
         # 初始化卫星和用户的位置
-        self.satellite_heights = self.initialize_altitude()
-        self.eval_angle = self.initialize_angle()
+        self.satellite_heights = self.initialize_altitude()  # 卫星高度这里的单位时km
+        self.eval_angle = self.initialize_angle()  # 俯仰角的单位是度
         self.angle_threshold = 15  # 单位：度
 
         # 初始化覆盖指示变量和接入决策变量
@@ -296,11 +296,22 @@ class Env(gym.Env):
 
 if __name__ == "__main__":
     env = Env()
-    obs, info = env.reset()
-    done = False
-    while not done:
-        action = env.action_space.sample()
-        obs, reward, terminated, truncated, info = env.step(action)
-        env.render()
-        done = terminated or truncated
-    env.close()
+    # 打印动作空间和观察空间的形式
+    print("Action Space:")
+    print(env.action_space)
+
+    print("\nObservation Space:")
+    print(env.observation_space)
+
+    # 打印观察空间中每个子空间的形式
+    for key, space in env.observation_space.spaces.items():
+        print(f"\nObservation Space - {key}:")
+        print(space)
+    # obs, info = env.reset()
+    # done = False
+    # while not done:
+    #     action = env.action_space.sample()
+    #     obs, reward, terminated, truncated, info = env.step(action)
+    #     env.render()
+    #     done = terminated or truncated
+    # env.close()
