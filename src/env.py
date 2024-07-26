@@ -140,8 +140,11 @@ class Env(gym.Env):
         # 检查是否结束
         is_done = self.current_time_step >= self.NUM_TIME_SLOTS
 
-        # 获取当前环境的观察
-        observation = self.get_observation()
+        if is_done:
+            observation = np.zeros(self.observation_space.shape)
+        else:
+            # 获取当前环境的观察
+            observation = self.get_observation()
 
         # 可选的额外信息
         information = {
