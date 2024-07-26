@@ -28,11 +28,11 @@ class Env(gym.Env):
         self.action_space = MultiBinary(self.NUM_SATELLITES * self.NUM_GROUND_USER)  # 动作空间的形状：300*10，每个卫星选择对哪个地面站进行接入
 
         # 调整观察空间以匹配实际的观察形状
-        observation_shape = (self.NUM_SATELLITES * self.NUM_GROUND_USER + self.NUM_GROUND_USER,)  # 观察空间应该至少包括：卫星对用户的覆盖，
+        # observation_shape = (self.NUM_SATELLITES * self.NUM_GROUND_USER + self.NUM_GROUND_USER,)  # 观察空间应该至少包括：卫星对用户的覆盖，
         self.coverage_space = spaces.MultiBinary((self.NUM_SATELLITES, self.NUM_GROUND_USER))
         self.previous_access_strategy_space = spaces.MultiBinary((self.NUM_SATELLITES, self.NUM_GROUND_USER))
         self.switch_count_space = spaces.Discrete(100)  # 假设最大切换次数为100
-        self.elevation_angle_space = spaces.Box(low=0, high=90, shape=(self.NUM_SATELLITES, self.NUM_GROUND_USER),
+        self.elevation_angle_space = spaces.Box(low=-90, high=90, shape=(self.NUM_SATELLITES, self.NUM_GROUND_USER),
                                                 dtype=np.float32)
         self.altitude_space = spaces.Box(low=0, high=10000, shape=(self.NUM_SATELLITES,), dtype=np.float32)
         self.observation_space = spaces.Dict({
@@ -49,7 +49,7 @@ class Env(gym.Env):
         self.angle_threshold = 15  # 单位：度
 
         # 初始化覆盖指示变量和接入决策变量
-        self.coverage_indicator = np.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER, self.NUM_TIME_SLOTS))
+        self.coverage_indicator = np.zeros((self.NUM_TIME_SLOTS, self.NUM_GROUND_USER, self.NUM_SATELLITES))
         self.access_decision = np.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER, self.NUM_TIME_SLOTS))
         self.current_time_step = 0
         self.w1 = 1  # 切换次数的权重
@@ -91,6 +91,17 @@ class Env(gym.Env):
         return sat_heights
 
     def step(self, action: np.ndarray) -> Tuple[np.ndarray, float, bool, bool, dict]:
+        # 检查是否已经达到最大时间步数
+        if self.current_time_step >= self.NUM_TIME_SLOTS:
+            is_done = True
+            observation = np.zeros(self.observation_space.shape)
+            reward = 0.0
+            information = {
+                'current_time_step': self.current_time_step,
+                'switch_count': self.switch_count.copy()
+            }
+            return observation, reward, is_done, False, information
+
         # 更新覆盖指示变量
         self.update_coverage_indicator(self.current_time_step)
 
@@ -152,7 +163,7 @@ class Env(gym.Env):
         self.current_time_step = 0
 
         # 重置覆盖指示变量和接入决策变量
-        self.coverage_indicator = np.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER, self.NUM_TIME_SLOTS))
+        self.coverage_indicator = np.zeros((self.NUM_TIME_SLOTS, self.NUM_GROUND_USER, self.NUM_SATELLITES))
         self.access_decision = np.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER, self.NUM_TIME_SLOTS))
 
         # 重置切换次数
@@ -172,16 +183,16 @@ class Env(gym.Env):
 
         return observation, {'current_time_step': self.current_time_step}
 
-    def get_observation(self) -> dict:
-        observation = {
-            "coverage": self.coverage_indicator[:, :, self.current_time_step],
-            "previous_access_strategy": self.access_decision[:, :,
-                                        self.current_time_step - 1] if self.current_time_step > 0 else np.zeros(
-                (self.NUM_SATELLITES, self.NUM_GROUND_USER)),
-            "switch_count": self.switch_count,
-            "elevation_angles": self.eval_angle[self.current_time_step],
-            "altitudes": self.satellite_heights[self.current_time_step]
-        }
+    def get_observation(self) -> np.ndarray:
+        coverage = self.coverage_indicator[self.current_time_step].flatten()
+        previous_access_strategy = self.access_decision[:, :,
+                                   self.current_time_step - 1].flatten() if self.current_time_step > 0 else np.zeros(
+            (self.NUM_SATELLITES, self.NUM_GROUND_USER)).flatten()
+        switch_count = self.switch_count
+        elevation_angles = self.eval_angle[self.current_time_step].flatten()
+        altitudes = self.satellite_heights[self.current_time_step]
+
+        observation = np.concatenate([coverage, previous_access_strategy, switch_count, elevation_angles, altitudes])
         return observation
 
     def calculate_reward(self, action_matrix: np.ndarray) -> float:
@@ -231,7 +242,7 @@ class Env(gym.Env):
         for satellite_index in range(self.NUM_SATELLITES):
             # 检查卫星是否不是当前接入的卫星并且在用户的覆盖范围内
             if satellite_index != accessed_satellite_index and self.coverage_indicator[
-                satellite_index, user_index, time_slot] == 1:
+                time_slot, user_index, satellite_index] == 1:
                 # 计算从该卫星到用户的下行路径损耗
                 loss = self.calculate_DL_pathloss(time_slot, user_index, satellite_index)
                 # 将 EIRP 从 dBm 转换为瓦特，以便进行线性计算
@@ -251,11 +262,11 @@ class Env(gym.Env):
     def update_coverage_indicator(self, current_time_slot: int):
         for user_index in range(self.NUM_GROUND_USER):
             for satellite_index in range(self.NUM_SATELLITES):
-                # 检查俯仰角是否大于限定值
+                # 检查仰角是否大于限定值
                 if self.eval_angle[current_time_slot, user_index, satellite_index] > self.angle_threshold:
-                    self.coverage_indicator[satellite_index, user_index, current_time_slot] = 1
+                    self.coverage_indicator[current_time_slot, user_index, satellite_index] = 1
                 else:
-                    self.coverage_indicator[satellite_index, user_index, current_time_slot] = 0
+                    self.coverage_indicator[current_time_slot, user_index, satellite_index] = 0
 
     def calculate_actual_rate(self, time_slot: int, user_index: int, satellite_index: int) -> float:
         capacity = self.channel_capacity[satellite_index, user_index, time_slot]
