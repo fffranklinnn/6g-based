@@ -9,6 +9,7 @@ from stable_baselines3.common.env_util import make_vec_env
 from env import Env  # 确保你的环境文件名和类名正确
 from gymnasium.spaces import MultiBinary, MultiDiscrete, Box, Dict
 
+
 class Actor(nn.Module):
     def __init__(self, state_dim, action_dim, max_action):
         super(Actor, self).__init__()
@@ -22,6 +23,7 @@ class Actor(nn.Module):
         a = torch.relu(self.l2(a))
         return self.max_action * torch.tanh(self.l3(a))
 
+
 class Critic(nn.Module):
     def __init__(self, state_dim, action_dim):
         super(Critic, self).__init__()
@@ -33,6 +35,7 @@ class Critic(nn.Module):
         q = torch.relu(self.l1(torch.cat([state, action], 1)))
         q = torch.relu(self.l2(q))
         return self.l3(q)
+
 
 class SAC:
     def __init__(self, state_dim, action_dim, max_action, env):
@@ -67,20 +70,22 @@ class SAC:
                     low.append(np.zeros(space.n, dtype=np.float32))
                     high.append(np.ones(space.n, dtype=np.float32))
                 elif isinstance(space, MultiDiscrete):
-                    low.append(np.zeros(space.nvec.shape, dtype=np.float32))
-                    high.append(space.nvec.astype(np.float32) - 1)
+                    low.append(np.zeros(space.nvec.shape, dtype=np.float32).flatten())
+                    high.append((space.nvec - 1).astype(np.float32).flatten())
                 else:
                     raise NotImplementedError(f"Unsupported space type: {type(space)}")
+            low = np.concatenate([x.flatten() for x in low])
+            high = np.concatenate([x.flatten() for x in high])
             flat_obs_space = Box(
-                low=np.concatenate(low),
-                high=np.concatenate(high),
+                low=low,
+                high=high,
                 dtype=np.float32
             )
         else:
             flat_obs_space = env.observation_space
 
         self.replay_buffer = ReplayBuffer(
-            buffer_size=1000000,
+            buffer_size=100000,  # 调整为较小的值，例如 100000
             observation_space=flat_obs_space,
             action_space=env.action_space,
             device=device,
@@ -143,6 +148,7 @@ class SAC:
         self.target_critic1.load_state_dict(torch.load(filename + "_target_critic1"))
         self.target_critic2.load_state_dict(torch.load(filename + "_target_critic2"))
 
+
 if __name__ == "__main__":
     env = Env()  # 确保你的环境类名和实例化方式正确
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -179,14 +185,29 @@ if __name__ == "__main__":
 
     for episode in range(num_episodes):
         state_dict, _ = env.reset()
-        state = np.concatenate([state_dict[key].flatten() for key in state_dict])  # 将观察空间展平为一个向量
+        try:
+            state = np.concatenate(
+                [state_dict[key].flatten() for key in state_dict if hasattr(state_dict[key], 'flatten')])
+        except Exception as e:
+            print(f"Error in flattening state_dict: {e}")
+            for key in state_dict:
+                print(f"Key: {key}, Value: {state_dict[key]}, Type: {type(state_dict[key])}")
+            raise e
+
         episode_reward = 0
 
         for t in range(max_timesteps):
             action = sac.select_action(state)
             action = action[:action_dim]  # 确保动作维度与动作空间匹配
             next_state_dict, reward, done, _, _ = env.step(action)
-            next_state = np.concatenate([next_state_dict[key].flatten() for key in next_state_dict])  # 展平下一状态
+            try:
+                next_state = np.concatenate([next_state_dict[key].flatten() for key in next_state_dict if
+                                             hasattr(next_state_dict[key], 'flatten')])
+            except Exception as e:
+                print(f"Error in flattening next_state_dict: {e}")
+                for key in next_state_dict:
+                    print(f"Key: {key}, Value: {next_state_dict[key]}, Type: {type(next_state_dict[key])}")
+                raise e
 
             not_done = 1.0 if not done else 0.0
 
