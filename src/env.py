@@ -258,6 +258,17 @@ class Env:
         CNR_linear = received_power_watts / self.noise_power
         return 10 * torch.log10(CNR_linear)
 
+    def calculate_interference_matrix(self, time_slot: int, action_matrix: torch.Tensor) -> torch.Tensor:
+        interference_matrix = torch.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER), dtype=torch.float32,
+                                          device=self.device)
+        for user_index in range(self.NUM_GROUND_USER):
+            for satellite_index in range(self.NUM_SATELLITES):
+                if action_matrix[satellite_index, user_index] == 1:
+                    interference_matrix[satellite_index, user_index] = self.calculate_interference(time_slot,
+                                                                                                   user_index,
+                                                                                                   satellite_index)
+        return interference_matrix
+
     def calculate_interference(self, time_slot: int, user_index: int, accessed_satellite_index: int) -> float:
         # 初始化总干扰功率为0
         total_interference_power_watts = 0
@@ -268,7 +279,7 @@ class Env:
             if satellite_index != accessed_satellite_index and self.coverage_indicator[
                 time_slot, user_index, satellite_index] == 1:
                 # 计算从该卫星到用户的下行路径损耗
-                loss = self.calculate_DL_pathloss(time_slot, user_index, satellite_index)
+                loss = self.calculate_DL_pathloss_matrix(time_slot)[satellite_index, user_index]
                 # 将 EIRP 从 dBm 转换为瓦特，以便进行线性计算
                 EIRP_watts = 10 ** ((self.EIRP - 30) / 10)
                 # 计算该卫星产生的干扰功率

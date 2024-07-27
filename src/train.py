@@ -21,15 +21,16 @@ def main():
 
     for episode in range(num_episodes):
         state, _ = env.reset()
-        state = torch.FloatTensor(flatten_state(state)).to(device)  # 确保状态在正确的设备上并平整化
+        state = flatten_state(state).to(device)  # 确保状态在正确的设备上并平整化
 
         episode_reward = 0
 
         for t in range(max_timesteps):
             action = sac.select_action(state)
-            action = torch.clamp(action, 0, 1).to(device)  # 确保动作在有效范围内并保持为tensor
+            action = torch.clamp(action, 0, 1)  # 确保动作在有效范围内
+
             next_state, reward, done, _ = env.step(action.cpu().numpy())  # 保持动作为numpy类型
-            next_state = torch.FloatTensor(flatten_state(next_state)).to(device)  # 平整并移至正确的设备
+            next_state = flatten_state(next_state).to(device)  # 平整并移至正确的设备
 
             not_done = 1.0 if not done else 0.0
 
@@ -50,7 +51,7 @@ def main():
             sac.save(f"sac_checkpoint_{episode + 1}")
 
         if (episode + 1) % 100 == 0:
-            avg_reward = np.mean([env.step(sac.select_action(torch.FloatTensor(flatten_state(env.reset()[0])).to(device)))[1] for _ in range(10)])
+            avg_reward = np.mean([env.step(sac.select_action(flatten_state(env.reset()[0]).to(device)))[1] for _ in range(10)])
             print(f"Episode {episode + 1}, Average Reward over 10 episodes: {avg_reward}")
 
     env.close()
