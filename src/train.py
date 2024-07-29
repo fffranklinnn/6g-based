@@ -1,8 +1,9 @@
 import torch
 import numpy as np
-from env import Env
+from env import Env  # 假设 env.py 中的 Env 类已经导入
 from sac import SAC
 from utils import flatten_state
+
 
 def main():
     env = Env()
@@ -29,12 +30,17 @@ def main():
             action = sac.select_action(state)
             action = torch.clamp(action, 0, 1)  # 确保动作在有效范围内
 
-            next_state, reward, done, _ = env.step(action.cpu().numpy())  # 保持动作为numpy类型
+            # 确保action是一个numpy数组并且形状正确
+            action = action.cpu().numpy()
+            action = action.reshape((env.NUM_SATELLITES, env.NUM_GROUND_USER))
+            print(f"Action shape after reshape: {action.shape}")
+
+            next_state, reward, done, _ = env.step(action)  # 保持动作为numpy类型
             next_state = flatten_state(next_state).to(device)  # 平整并移至正确的设备
 
             not_done = 1.0 if not done else 0.0
 
-            sac.replay_buffer.add(state.cpu().numpy(), action.cpu().numpy(), next_state.cpu().numpy(), reward, not_done)  # 处理设备转移问题
+            sac.replay_buffer.add(state.cpu().numpy(), action, next_state.cpu().numpy(), reward, not_done)  # 处理设备转移问题
             state = next_state
             episode_reward += reward
 
@@ -55,6 +61,7 @@ def main():
             print(f"Episode {episode + 1}, Average Reward over 10 episodes: {avg_reward}")
 
     env.close()
+
 
 if __name__ == "__main__":
     main()
