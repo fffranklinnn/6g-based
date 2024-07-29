@@ -2,6 +2,7 @@ import pandas as pd
 import torch
 from typing import Optional, Tuple
 
+
 class Env:
     def __init__(self):
         super(Env, self).__init__()
@@ -103,37 +104,28 @@ class Env:
         return sat_heights
 
     def step(self, action: torch.Tensor) -> Tuple[torch.Tensor, float, bool, dict]:
-        # 将 action 转换为张量并确保形状正确
+        # 检查 action 是否为 PyTorch 张量，如果不是则进行转换
+        action = self.ensure_tensor(action)
+
+        # 确保 action 的形状正确
         action_matrix = action.view((self.NUM_SATELLITES, self.NUM_GROUND_USER)).to(self.device)
 
         # 检查是否已经达到最大时间步数
         if self.current_time_step >= self.NUM_TIME_SLOTS:
-            is_done = True
-            observation = torch.zeros(self.get_observation_shape(), device=self.device)
-            reward = 0.0
-            information = {
-                'current_time_step': self.current_time_step,
-                'switch_count': self.switch_count.clone()
-            }
-            return observation, reward, is_done, information
+            return self.terminate()
 
         # 更新覆盖指示变量
         self.update_coverage_indicator(self.current_time_step)
 
         # 检查并更新切换次数
         if self.current_time_step > 0:
-            previous_action_matrix = self.access_decision[:, :, self.current_time_step - 1]
-            switch_matrix = (action_matrix != previous_action_matrix).int()
-            self.switch_count += switch_matrix.sum(dim=0)
+            self.update_switch_count(action_matrix)
 
         # 根据action更新接入决策
         self.access_decision[:, :, self.current_time_step] = action_matrix
 
         # 计算用户传输速率和信道容量
-        CNR = self.calculate_CNR_matrix(self.current_time_step, action_matrix)
-        INR = self.calculate_interference_matrix(self.current_time_step, action_matrix)
-        self.channel_capacity[:, :, self.current_time_step] = self.total_bandwidth * torch.log2(1.0 + CNR / (INR + 1.0))
-        self.user_rate[:, :, self.current_time_step] = self.calculate_actual_rate_matrix(self.current_time_step, action_matrix)
+        self.update_rates_and_capacity(action_matrix)
 
         # 计算奖励
         reward = self.calculate_reward(action_matrix)
@@ -144,11 +136,7 @@ class Env:
         # 检查是否结束
         is_done = self.current_time_step >= self.NUM_TIME_SLOTS
 
-        if is_done:
-            observation = torch.zeros(self.get_observation_shape(), device=self.device)
-        else:
-            # 获取当前环境的观察
-            observation = self.get_observation()
+        observation = self.get_observation() if not is_done else torch.zeros(self.get_observation_shape(), device=self.device)
 
         # 可选的额外信息
         information = {
@@ -156,10 +144,7 @@ class Env:
             'switch_count': self.switch_count.clone()
         }
 
-        # 设置 terminated 和 truncated
-        is_terminated = is_done
-
-        return observation, reward, is_terminated, information
+        return observation, reward, is_done, information
 
     def reset(self, *, seed: Optional[int] = None, options: Optional[dict] = None) -> Tuple[torch.Tensor, dict]:
         # 重置当前时间步
@@ -189,7 +174,6 @@ class Env:
 
     def get_observation(self) -> torch.Tensor:
         if self.current_time_step >= len(self.coverage_indicator):
-            # 返回一个默认的观察值，而不是抛出异常
             return torch.zeros(self.get_observation_shape(), device=self.device)
 
         coverage = self.coverage_indicator[self.current_time_step].flatten().float()
@@ -202,7 +186,6 @@ class Env:
         return observation
 
     def get_observation_shape(self):
-        # 获取展平后的观察空间的形状
         return torch.cat([
             self.coverage_indicator[0].flatten().float(),
             torch.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER), device=self.device).flatten().float(),
@@ -212,14 +195,11 @@ class Env:
         ]).shape
 
     def calculate_reward(self, action_matrix: torch.Tensor) -> float:
-        # 计算奖励
         reward = 0
         for satellite_index in range(self.NUM_SATELLITES):
             for user_index in range(self.NUM_GROUND_USER):
                 if action_matrix[satellite_index, user_index] == 1:
-                    # 计算用户传输速率
                     rate = self.user_rate[satellite_index, user_index, self.current_time_step]
-                    # 检查是否满足最低CNR阈值
                     if rate >= self.r_thr:
                         reward += self.w2 * rate
                     else:
@@ -228,9 +208,17 @@ class Env:
         return reward
 
     def calculate_distance_matrix(self, time_slot: int) -> torch.Tensor:
-        sat_height = self.satellite_heights[time_slot]
-        eval_angle = self.eval_angle[time_slot]
-        return self.radius_earth * (self.radius_earth + sat_height) / torch.sqrt((self.radius_earth + sat_height) ** 2 - self.radius_earth ** 2 * torch.cos(torch.deg2rad(eval_angle)) ** 2)
+        sat_height = self.satellite_heights[time_slot]  # Shape: [NUM_SATELLITES]
+        eval_angle = self.eval_angle[time_slot]  # Shape: [NUM_GROUND_USER]
+
+        # Reshape to enable broadcasting
+        sat_height = sat_height.view(-1, 1)  # Shape: [NUM_SATELLITES, 1]
+        eval_angle = eval_angle.view(1, -1)  # Shape: [1, NUM_GROUND_USER]
+
+        distance = self.radius_earth * (self.radius_earth + sat_height) / torch.sqrt(
+            (self.radius_earth + sat_height) ** 2 - self.radius_earth ** 2 * torch.cos(torch.deg2rad(eval_angle)) ** 2
+        )
+        return distance  # Shape: [NUM_SATELLITES, NUM_GROUND_USER]
 
     def calculate_DL_pathloss_matrix(self, time_slot: int) -> torch.Tensor:
         distance = self.calculate_distance_matrix(time_slot)
@@ -251,33 +239,27 @@ class Env:
         return interference_matrix
 
     def calculate_interference(self, time_slot: int, user_index: int, accessed_satellite_index: int) -> float:
-        # 初始化总干扰功率为0
         total_interference_power_watts = 0
-
-        # 遍历所有卫星，计算每个卫星对用户的干扰
         for satellite_index in range(self.NUM_SATELLITES):
-            # 检查卫星是否不是当前接入的卫星并且在用户的覆盖范围内
-            if satellite_index != accessed_satellite_index and self.coverage_indicator[time_slot, user_index, satellite_index] == 1:
-                # 计算从该卫星到用户的下行路径损耗
-                loss = self.calculate_DL_pathloss_matrix(time_slot)[satellite_index, user_index]
-                # 将 EIRP 从 dBm 转换为瓦特，以便进行线性计算
+            if satellite_index != accessed_satellite_index and self.coverage_indicator[
+                time_slot, user_index, satellite_index] == 1:
+                loss = self.calculate_DL_pathloss_matrix(time_slot)
+                if satellite_index >= loss.shape[0] or user_index >= loss.shape[1]:
+                    print(
+                        f"Index out of bounds: satellite_index={satellite_index}, user_index={user_index}, loss.shape={loss.shape}")
+                    continue
+                loss_value = loss[satellite_index, user_index]
                 EIRP_watts = 10 ** ((self.EIRP - 30) / 10)
-                # 计算该卫星产生的干扰功率
-                interference_power_watts = EIRP_watts * (10 ** (self.receive_benefit_ground / 10)) / (10 ** (loss / 10))
-                # 累加总干扰功率
+                interference_power_watts = EIRP_watts * (10 ** (self.receive_benefit_ground / 10)) / (
+                            10 ** (loss_value / 10))
                 total_interference_power_watts += interference_power_watts
 
-        # 将总干扰功率从瓦特转换为 dBm，以便与其他以 dBm 为单位的参数进行比较
-        # 注意：转换回 dBm 需要加上 30 dBm (因为 1W = 30 dBm)
         total_interference_dBm = 10 * torch.log10(torch.tensor(total_interference_power_watts)) + 30
-
-        # 返回总干扰功率的 dBm 值
         return total_interference_dBm.item()
 
     def update_coverage_indicator(self, current_time_slot: int):
         for user_index in range(self.NUM_GROUND_USER):
             for satellite_index in range(self.NUM_SATELLITES):
-                # 检查仰角是否大于限定值
                 if self.eval_angle[current_time_slot, user_index, satellite_index] > self.angle_threshold:
                     self.coverage_indicator[current_time_slot, user_index, satellite_index] = 1
                 else:
@@ -289,14 +271,33 @@ class Env:
         return torch.min(capacity, demand)
 
     def render(self, mode='human'):
-        """
-        渲染环境。
-        """
-        # 示例：打印当前时间步
         print(f"Current time step: {self.current_time_step}")
 
     def close(self):
-        """
-        关闭
-        """
+        pass
 
+    def ensure_tensor(self, data) -> torch.Tensor:
+        if not isinstance(data, torch.Tensor):
+            data = torch.tensor(data, dtype=torch.int).to(self.device)
+        return data
+
+    def terminate(self) -> Tuple[torch.Tensor, float, bool, dict]:
+        observation = torch.zeros(self.get_observation_shape(), device=self.device)
+        reward = 0.0
+        information = {
+            'current_time_step': self.current_time_step,
+            'switch_count': self.switch_count.clone()
+        }
+        return observation, reward, True, information
+
+    def update_switch_count(self, action_matrix: torch.Tensor):
+        previous_action_matrix = self.access_decision[:, :, self.current_time_step - 1]
+        switch_matrix = (action_matrix != previous_action_matrix).int()
+        self.switch_count += switch_matrix.sum(dim=0)
+
+    def update_rates_and_capacity(self, action_matrix: torch.Tensor):
+        CNR = self.calculate_CNR_matrix(self.current_time_step, action_matrix)
+        INR = self.calculate_interference_matrix(self.current_time_step, action_matrix)
+        self.channel_capacity[:, :, self.current_time_step] = self.total_bandwidth * torch.log2(1.0 + CNR / (INR + 1.0))
+        self.user_rate[:, :, self.current_time_step] = self.calculate_actual_rate_matrix(self.current_time_step,
+                                                                                         action_matrix)
