@@ -225,9 +225,16 @@ class Env:
         return 20 * torch.log10(distance) + 20 * torch.log10(torch.tensor(self.communication_frequency)) - 147.55
 
     def calculate_CNR_matrix(self, time_slot: int, action_matrix: torch.Tensor) -> torch.Tensor:
+        # 计算路径损耗矩阵，假设其形状为 [NUM_SATELLITES, NUM_GROUND_USERS]
         loss = self.calculate_DL_pathloss_matrix(time_slot)
+
+        # 计算接收功率（单位：瓦特），假设 self.EIRP_watts 和 self.receive_benefit_ground 是标量
         received_power_watts = self.EIRP_watts * 10 ** (self.receive_benefit_ground / 10) / (10 ** (loss / 10))
+
+        # 计算 CNR（线性值），假设 self.noise_power 是标量
         CNR_linear = received_power_watts / self.noise_power
+
+        # 返回 CNR 的对数值（单位：dB），保持矩阵形状
         return 10 * torch.log10(CNR_linear)
 
     def calculate_interference_matrix(self, time_slot: int, action_matrix: torch.Tensor) -> torch.Tensor:
@@ -254,7 +261,7 @@ class Env:
                             10 ** (loss_value / 10))
                 total_interference_power_watts += interference_power_watts
 
-        total_interference_dBm = 10 * torch.log10(torch.tensor(total_interference_power_watts)) + 30
+        total_interference_dBm = 10 * torch.log10(torch.tensor(total_interference_power_watts).clone().detach()) + 30
         return total_interference_dBm.item()
 
     def update_coverage_indicator(self, current_time_slot: int):
@@ -296,8 +303,18 @@ class Env:
         self.switch_count += switch_matrix.sum(dim=0)
 
     def update_rates_and_capacity(self, action_matrix: torch.Tensor):
+        # 计算 CNR 矩阵，假设其形状为 [NUM_SATELLITES, NUM_GROUND_USERS]
         CNR = self.calculate_CNR_matrix(self.current_time_step, action_matrix)
+
+        # 计算 INR 矩阵，假设其形状为 [NUM_SATELLITES, NUM_GROUND_USERS]
         INR = self.calculate_interference_matrix(self.current_time_step, action_matrix)
+
+        # 确保 CNR 和 INR 的形状一致
+        assert CNR.shape == INR.shape, f"CNR shape {CNR.shape} does not match INR shape {INR.shape}"
+
+        # 更新信道容量，假设 self.channel_capacity 的形状为 [NUM_SATELLITES, NUM_GROUND_USERS, TIME_STEPS]
         self.channel_capacity[:, :, self.current_time_step] = self.total_bandwidth * torch.log2(1.0 + CNR / (INR + 1.0))
+
+        # 更新用户速率，假设 self.user_rate 的形状为 [NUM_SATELLITES, NUM_GROUND_USERS, TIME_STEPS]
         self.user_rate[:, :, self.current_time_step] = self.calculate_actual_rate_matrix(self.current_time_step,
                                                                                          action_matrix)
