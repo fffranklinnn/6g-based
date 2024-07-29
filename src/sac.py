@@ -5,6 +5,7 @@ from collections import deque
 import random
 import numpy as np
 
+
 class Actor(nn.Module):
     def __init__(self, state_dim, action_dim, max_action):
         super(Actor, self).__init__()
@@ -18,6 +19,7 @@ class Actor(nn.Module):
         a = torch.relu(self.l2(a))
         return self.max_action * torch.tanh(self.l3(a))
 
+
 class Critic(nn.Module):
     def __init__(self, state_dim, action_dim):
         super(Critic, self).__init__()
@@ -30,11 +32,13 @@ class Critic(nn.Module):
         q = torch.relu(self.l2(q))
         return self.l3(q)
 
+
 class ReplayBuffer:
-    def __init__(self, max_size, state_dim, action_dim):
+    def __init__(self, max_size, state_dim, action_dim, device):
         self.buffer = deque(maxlen=max_size)
         self.state_dim = state_dim
         self.action_dim = action_dim
+        self.device = device  # 初始化 device 参数
 
     def add(self, state, action, next_state, reward, not_done):
         self.buffer.append((state, action, next_state, reward, not_done))
@@ -51,6 +55,7 @@ class ReplayBuffer:
 
     def __len__(self):
         return len(self.buffer)
+
 
 class SAC:
     def __init__(self, state_dim, action_dim, max_action, device):
@@ -69,7 +74,7 @@ class SAC:
         self.target_critic1.load_state_dict(self.critic1.state_dict())
         self.target_critic2.load_state_dict(self.critic2.state_dict())
 
-        self.replay_buffer = ReplayBuffer(max_size=100000, state_dim=state_dim, action_dim=action_dim)
+        self.replay_buffer = ReplayBuffer(max_size=100000, state_dim=state_dim, action_dim=action_dim,device=self.device)
         self.replay_buffer.device = self.device  # 将设备传递给replay buffer
         self.max_action = max_action
         self.discount = 0.99
