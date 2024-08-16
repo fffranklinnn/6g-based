@@ -7,12 +7,12 @@ class Env:
     def __init__(self):
         super(Env, self).__init__()
         # 定义常量参数
-        self.NUM_SATELLITES = 300  # 卫星数量
+        self.NUM_SATELLITES = 301  # 卫星数量
         self.NUM_GROUND_USER = 10  # 地面用户数量
         self.TOTAL_TIME = 3000  # 总模拟时间，单位：秒
         self.NUM_TIME_SLOTS = 60  # 时间段的划分数量
         self.TIME_SLOT_DURATION = self.TOTAL_TIME // self.NUM_TIME_SLOTS  # 每个时间段的持续时间
-        self.communication_frequency = 18.5e9  # 通信频率为18.5GHz
+        self.communication_frequency = torch.tensor(18.5e9)  # 通信频率为18.5GHz
         self.total_bandwidth = 250e6  # 总带宽为250MHz
         self.noise_temperature = 213.15  # 系统的噪声温度为213.15开尔文
         self.Polarization_isolation_factor = 12  # 单位dB
@@ -29,7 +29,7 @@ class Env:
 
         # 定义动作空间和观察空间
         self.action_space = torch.zeros(self.NUM_SATELLITES * self.NUM_GROUND_USER, dtype=torch.int)
-        self.coverage_space = torch.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER), dtype=torch.int)
+        self.coverage_space = torch.zeros((self.NUM_TIME_SLOTS, self.NUM_SATELLITES, self.NUM_GROUND_USER, 2), dtype=torch.int)
         self.previous_access_strategy_space = torch.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER), dtype=torch.int)
         self.switch_count_space = torch.zeros(self.NUM_GROUND_USER, dtype=torch.int)
         self.elevation_angle_space = torch.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER), dtype=torch.float32)
@@ -47,7 +47,7 @@ class Env:
         self.eval_angle = self.initialize_angle()
 
         # 初始化覆盖指示变量和接入决策变量
-        self.coverage_indicator = torch.zeros((self.NUM_TIME_SLOTS, self.NUM_GROUND_USER, self.NUM_SATELLITES), dtype=torch.int)
+        self.coverage_indicator = self.initialize_coverage()
         self.access_decision = torch.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER), dtype=torch.int)  # 仅存储当前时隙的接入决策
         self.current_time_step = 0
         self.switch_count = torch.zeros(self.NUM_GROUND_USER, dtype=torch.int)
@@ -90,7 +90,7 @@ class Env:
                 for j in range(self.NUM_GROUND_USER):
                     eval_angle[time_slot, j, i] = df.iloc[1 + i * self.NUM_GROUND_USER + j, time_slot]
 
-        print(f"Initialized eval_angle with shape: {eval_angle.shape}")
+        print(f"Initialized eval_angle with shape: {eval_angle.shape}")  # [TIME_SLOTS,NUM_GROUND_USER,NUM_SATELLITES]
         return eval_angle
 
     def initialize_altitude(self):
@@ -103,8 +103,26 @@ class Env:
             for i in range(self.NUM_SATELLITES):
                 sat_heights[time_slot, i] = df.iloc[1 + i, time_slot]
 
-        print(f"Initialized sat_heights with shape: {sat_heights.shape}")
+        print(f"Initialized sat_heights with shape: {sat_heights.shape}")  # [NUM_TIME_SLOTS,NUM_SATELLITES]
         return sat_heights
+
+    def initialize_coverage(self):
+        # 从CSV文件读取覆盖数据
+        df = pd.read_csv('coverage_data.csv')
+        coverage = torch.zeros((self.NUM_TIME_SLOTS, self.NUM_GROUND_USER, self.NUM_SATELLITES, 2), dtype=torch.float32)
+
+        # 填充 coverage 数组
+        for time_slot in range(self.NUM_TIME_SLOTS):
+            for i in range(self.NUM_SATELLITES):
+                for j in range(self.NUM_GROUND_USER):
+                    # 获取覆盖字符串并解析成整数
+                    coverage_str = df.iloc[1 + i * self.NUM_GROUND_USER + j, time_slot]
+                    beam_1, beam_2 = map(int, coverage_str.strip('()').split(','))
+                    coverage[time_slot, j, i, 0] = beam_1
+                    coverage[time_slot, j, i, 1] = beam_2
+
+        print(f"Initialized coverage with shape: {coverage.shape}")
+        return coverage
 
     def step(self, action: torch.Tensor) -> Tuple[torch.Tensor, float, bool, dict]:
         # 确保 action 是张量
@@ -234,29 +252,36 @@ class Env:
         print(f"Calculated reward: {reward}")
         return reward
 
-    def calculate_distance_matrix(self, time_slot: int) -> torch.Tensor:
-        sat_height = self.satellite_heights[time_slot]  # Shape: [NUM_SATELLITES]
-        eval_angle = self.eval_angle[time_slot]  # Shape: [NUM_GROUND_USER]
+    def calculate_distance_matrix(self) -> torch.Tensor:
+        # 获取所有时间段的卫星高度和仰角
+        sat_heights = self.satellite_heights  # Shape: [NUM_TIME_SLOTS, NUM_SATELLITES]
+        eval_angles = self.eval_angle  # Shape: [NUM_TIME_SLOTS, NUM_GROUND_USER, NUM_SATELLITES]
 
         # Reshape to enable broadcasting
-        sat_height = sat_height.view(-1, 1)  # Shape: [NUM_SATELLITES, 1]
-        eval_angle = eval_angle.view(1, -1)  # Shape: [1, NUM_GROUND_USER]
+        sat_heights = sat_heights.unsqueeze(1).unsqueeze(3)  # Shape: [NUM_TIME_SLOTS, 1, NUM_SATELLITES, 1]
+        eval_angles = eval_angles.unsqueeze(2)  # Shape: [NUM_TIME_SLOTS, NUM_GROUND_USER, 1, NUM_SATELLITES]
 
-        distance = self.radius_earth * (self.radius_earth + sat_height) / torch.sqrt(
-            (self.radius_earth + sat_height) ** 2 - self.radius_earth ** 2 * torch.cos(torch.deg2rad(eval_angle)) ** 2
+        # 计算距离矩阵
+        distance = self.radius_earth * (self.radius_earth + sat_heights) / torch.sqrt(
+            (self.radius_earth + sat_heights) ** 2 - self.radius_earth ** 2 * torch.cos(torch.deg2rad(eval_angles)) ** 2
         )
-        print(f"Distance matrix shape: {distance.shape}")
-        return distance  # Shape: [NUM_SATELLITES, NUM_GROUND_USER]
 
-    def calculate_DL_pathloss_matrix(self, time_slot: int) -> torch.Tensor:
-        distance = self.calculate_distance_matrix(time_slot)
-        pathloss = 20 * torch.log10(distance) + 20 * torch.log10(torch.tensor(self.communication_frequency)) - 147.55
+        # 调整形状为 [NUM_TIME_SLOTS, NUM_SATELLITES, NUM_GROUND_USER]
+        distance = distance.squeeze(3).permute(0, 2, 1)  # Shape: [NUM_TIME_SLOTS, NUM_SATELLITES, NUM_GROUND_USER]
+
+        print(f"Distance matrix shape: {distance.shape}")
+        return distance  # Shape: [NUM_TIME_SLOTS, NUM_SATELLITES, NUM_GROUND_USER]
+
+    def calculate_DL_pathloss_matrix(self, distance_matrix: torch.Tensor) -> torch.Tensor:
+        # 计算路径损耗矩阵
+        pathloss = 20 * torch.log10(distance_matrix) + 20 * torch.log10(self.communication_frequency) - 147.55
+
         print(f"Pathloss matrix shape: {pathloss.shape}")
-        return pathloss
+        return pathloss  # Shape: [NUM_TIME_SLOTS, NUM_SATELLITES, NUM_GROUND_USER]
 
     def calculate_CNR_matrix(self, time_slot: int, action_matrix: torch.Tensor) -> torch.Tensor:
         # 计算路径损耗矩阵，假设其形状为 [NUM_SATELLITES, NUM_GROUND_USERS]
-        loss = self.calculate_DL_pathloss_matrix(time_slot)
+        loss = self.calculate_DL_pathloss_matrix(torch.tensor(time_slot))
 
         # 计算接收功率（单位：瓦特），假设 self.EIRP_watts 和 self.receive_benefit_ground 是标量
         received_power_watts = self.EIRP_watts * 10 ** (self.receive_benefit_ground / 10) / (10 ** (loss / 10))
@@ -283,7 +308,7 @@ class Env:
         for satellite_index in range(self.NUM_SATELLITES):
             if satellite_index != accessed_satellite_index and self.coverage_indicator[
                 time_slot, user_index, satellite_index] == 1:
-                loss = self.calculate_DL_pathloss_matrix(time_slot)
+                loss = self.calculate_DL_pathloss_matrix(torch.tensor(time_slot))
                 if satellite_index >= loss.shape[0] or user_index >= loss.shape[1]:
                     print(
                         f"Index out of bounds: satellite_index={satellite_index}, user_index={user_index}, loss.shape={loss.shape}")
