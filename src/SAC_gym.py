@@ -1,241 +1,201 @@
+import random
+import gym
 import numpy as np
+from tqdm import tqdm
 import torch
-import torch.nn as nn
-import torch.optim as optim
-import gymnasium as gym
-from stable_baselines3.common.buffers import ReplayBuffer
-from stable_baselines3.common.noise import NormalActionNoise
-from stable_baselines3.common.env_util import make_vec_env
-from env_gym import CustomEnv  # 确保你的环境文件名和类名正确
-from gymnasium.spaces import MultiBinary, MultiDiscrete, Box, Dict
+import torch.nn.functional as F
+from torch.distributions import Normal
+import matplotlib.pyplot as plt
+import rl_utils
 
 
-class Actor(nn.Module):
-    def __init__(self, state_dim, action_dim, max_action):
-        super(Actor, self).__init__()
-        self.l1 = nn.Linear(state_dim, 256)
-        self.l2 = nn.Linear(256, 256)
-        self.l3 = nn.Linear(256, action_dim)
-        self.max_action = max_action
+class PolicyNet(torch.nn.Module):
+    def __init__(self, state_dim, hidden_dim, action_dim):
+        super(PolicyNet, self).__init__()
+        self.fc1 = torch.nn.Linear(state_dim, hidden_dim)
+        self.fc2 = torch.nn.Linear(hidden_dim, action_dim)
 
-    def forward(self, state):
-        a = torch.relu(self.l1(state))
-        a = torch.relu(self.l2(a))
-        return self.max_action * torch.tanh(self.l3(a))
+    def forward(self, x):
+        x = F.relu(self.fc1(x))
+        return F.softmax(self.fc2(x), dim=1)
 
 
-class Critic(nn.Module):
-    def __init__(self, state_dim, action_dim):
-        super(Critic, self).__init__()
-        self.l1 = nn.Linear(state_dim + action_dim, 256)
-        self.l2 = nn.Linear(256, 256)
-        self.l3 = nn.Linear(256, 1)
+class QValueNet(torch.nn.Module):
+    ''' 只有一层隐藏层的Q网络 '''
+    def __init__(self, state_dim, hidden_dim, action_dim):
+        super(QValueNet, self).__init__()
+        self.fc1 = torch.nn.Linear(state_dim, hidden_dim)
+        self.fc2 = torch.nn.Linear(hidden_dim, action_dim)
 
-    def forward(self, state, action):
-        q = torch.relu(self.l1(torch.cat([state, action], 1)))
-        q = torch.relu(self.l2(q))
-        return self.l3(q)
-
-
+    def forward(self, x):
+        x = F.relu(self.fc1(x))
+        return self.fc2(x)
 class SAC:
-    def __init__(self, state_dim, action_dim, max_action, env):
-        self.actor = Actor(state_dim, action_dim, max_action).to(device)
-        self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=3e-4)
+    ''' 处理离散动作的SAC算法 '''
+    def __init__(self, state_dim, hidden_dim, action_dim, actor_lr, critic_lr,
+                 alpha_lr, target_entropy, tau, gamma, device):
+        # 策略网络
+        self.actor = PolicyNet(state_dim, hidden_dim, action_dim).to(device)
+        # 第一个Q网络
+        self.critic_1 = QValueNet(state_dim, hidden_dim, action_dim).to(device)
+        # 第二个Q网络
+        self.critic_2 = QValueNet(state_dim, hidden_dim, action_dim).to(device)
+        self.target_critic_1 = QValueNet(state_dim, hidden_dim,
+                                         action_dim).to(device)  # 第一个目标Q网络
+        self.target_critic_2 = QValueNet(state_dim, hidden_dim,
+                                         action_dim).to(device)  # 第二个目标Q网络
+        # 令目标Q网络的初始参数和Q网络一样
+        self.target_critic_1.load_state_dict(self.critic_1.state_dict())
+        self.target_critic_2.load_state_dict(self.critic_2.state_dict())
+        self.actor_optimizer = torch.optim.Adam(self.actor.parameters(),
+                                                lr=actor_lr)
+        self.critic_1_optimizer = torch.optim.Adam(self.critic_1.parameters(),
+                                                   lr=critic_lr)
+        self.critic_2_optimizer = torch.optim.Adam(self.critic_2.parameters(),
+                                                   lr=critic_lr)
+        # 使用alpha的log值,可以使训练结果比较稳定
+        self.log_alpha = torch.tensor(np.log(0.01), dtype=torch.float)
+        self.log_alpha.requires_grad = True  # 可以对alpha求梯度
+        self.log_alpha_optimizer = torch.optim.Adam([self.log_alpha],
+                                                    lr=alpha_lr)
+        self.target_entropy = target_entropy  # 目标熵的大小
+        self.gamma = gamma
+        self.tau = tau
+        self.device = device
 
-        self.critic1 = Critic(state_dim, action_dim).to(device)
-        self.critic2 = Critic(state_dim, action_dim).to(device)
-        self.critic1_optimizer = optim.Adam(self.critic1.parameters(), lr=3e-4)
-        self.critic2_optimizer = optim.Adam(self.critic2.parameters(), lr=3e-4)
+    def take_action(self, state):
+        state = torch.tensor([state], dtype=torch.float).to(self.device)
+        probs = self.actor(state)
+        action_dist = torch.distributions.Categorical(probs)
+        action = action_dist.sample()
+        return action.item()
 
-        self.target_critic1 = Critic(state_dim, action_dim).to(device)
-        self.target_critic2 = Critic(state_dim, action_dim).to(device)
-        self.target_critic1.load_state_dict(self.critic1.state_dict())
-        self.target_critic2.load_state_dict(self.critic2.state_dict())
+    # 计算目标Q值,直接用策略网络的输出概率进行期望计算
+    def calc_target(self, rewards, next_states, dones):
+        next_probs = self.actor(next_states)
+        next_log_probs = torch.log(next_probs + 1e-8)
+        entropy = -torch.sum(next_probs * next_log_probs, dim=1, keepdim=True)
+        q1_value = self.target_critic_1(next_states)
+        q2_value = self.target_critic_2(next_states)
+        min_qvalue = torch.sum(next_probs * torch.min(q1_value, q2_value),
+                               dim=1,
+                               keepdim=True)
+        next_value = min_qvalue + self.log_alpha.exp() * entropy
+        td_target = rewards + self.gamma * next_value * (1 - dones)
+        return td_target
 
-        # 确保 observation_space 和 action_space 的 dtype 是正确的
-        if isinstance(env.observation_space, Box):
-            env.observation_space.dtype = np.float32
-        if isinstance(env.action_space, Box):
-            env.action_space.dtype = np.float32
+    def soft_update(self, net, target_net):
+        for param_target, param in zip(target_net.parameters(),
+                                       net.parameters()):
+            param_target.data.copy_(param_target.data * (1.0 - self.tau) +
+                                    param.data * self.tau)
 
-        # 展平 observation_space
-        if isinstance(env.observation_space, Dict):
-            low = []
-            high = []
-            for space in env.observation_space.spaces.values():
-                if isinstance(space, Box):
-                    low.append(space.low.flatten())
-                    high.append(space.high.flatten())
-                elif isinstance(space, MultiBinary):
-                    low.append(np.zeros(space.n, dtype=np.float32))
-                    high.append(np.ones(space.n, dtype=np.float32))
-                elif isinstance(space, MultiDiscrete):
-                    low.append(np.zeros(space.nvec.shape, dtype=np.float32).flatten())
-                    high.append((space.nvec - 1).astype(np.float32).flatten())
-                else:
-                    raise NotImplementedError(f"Unsupported space type: {type(space)}")
-            low = np.concatenate([x.flatten() for x in low])
-            high = np.concatenate([x.flatten() for x in high])
-            flat_obs_space = Box(
-                low=low,
-                high=high,
-                dtype=np.float32
-            )
-        else:
-            flat_obs_space = env.observation_space
+    def update(self, transition_dict):
+        states = torch.tensor(transition_dict['states'],
+                              dtype=torch.float).to(self.device)
+        actions = torch.tensor(transition_dict['actions']).view(-1, 1).to(
+            self.device)  # 动作不再是float类型
+        rewards = torch.tensor(transition_dict['rewards'],
+                               dtype=torch.float).view(-1, 1).to(self.device)
+        next_states = torch.tensor(transition_dict['next_states'],
+                                   dtype=torch.float).to(self.device)
+        dones = torch.tensor(transition_dict['dones'],
+                             dtype=torch.float).view(-1, 1).to(self.device)
 
-        self.replay_buffer = ReplayBuffer(
-            buffer_size=100000,  # 调整为较小的值，例如 100000
-            observation_space=flat_obs_space,
-            action_space=env.action_space,
-            device=device,
-            optimize_memory_usage=False,
-            handle_timeout_termination=False  # 确保与 optimize_memory_usage 兼容
-        )
-        self.max_action = max_action
-        self.discount = 0.99
-        self.tau = 0.005
-        self.alpha = 0.2
+        # 更新两个Q网络
+        td_target = self.calc_target(rewards, next_states, dones)
+        critic_1_q_values = self.critic_1(states).gather(1, actions)
+        critic_1_loss = torch.mean(
+            F.mse_loss(critic_1_q_values, td_target.detach()))
+        critic_2_q_values = self.critic_2(states).gather(1, actions)
+        critic_2_loss = torch.mean(
+            F.mse_loss(critic_2_q_values, td_target.detach()))
+        self.critic_1_optimizer.zero_grad()
+        critic_1_loss.backward()
+        self.critic_1_optimizer.step()
+        self.critic_2_optimizer.zero_grad()
+        critic_2_loss.backward()
+        self.critic_2_optimizer.step()
 
-    def select_action(self, state):
-        state = torch.FloatTensor(state.reshape(1, -1)).to(device)
-        return self.actor(state).cpu().data.numpy().flatten()
-
-    def train(self, batch_size=256):
-        state, action, next_state, reward, not_done = self.replay_buffer.sample(batch_size)
-
-        with torch.no_grad():
-            next_action = self.actor(next_state)
-            target_q1 = self.target_critic1(next_state, next_action)
-            target_q2 = self.target_critic2(next_state, next_action)
-            target_q = reward + not_done * self.discount * torch.min(target_q1, target_q2)
-
-        current_q1 = self.critic1(state, action)
-        current_q2 = self.critic2(state, action)
-        critic1_loss = nn.MSELoss()(current_q1, target_q)
-        critic2_loss = nn.MSELoss()(current_q2, target_q)
-
-        self.critic1_optimizer.zero_grad()
-        self.critic2_optimizer.zero_grad()
-        critic1_loss.backward()
-        critic2_loss.backward()
-        self.critic1_optimizer.step()
-        self.critic2_optimizer.step()
-
-        actor_loss = -self.critic1(state, self.actor(state)).mean()
-
+        # 更新策略网络
+        probs = self.actor(states)
+        log_probs = torch.log(probs + 1e-8)
+        # 直接根据概率计算熵
+        entropy = -torch.sum(probs * log_probs, dim=1, keepdim=True)  #
+        q1_value = self.critic_1(states)
+        q2_value = self.critic_2(states)
+        min_qvalue = torch.sum(probs * torch.min(q1_value, q2_value),
+                               dim=1,
+                               keepdim=True)  # 直接根据概率计算期望
+        actor_loss = torch.mean(-self.log_alpha.exp() * entropy - min_qvalue)
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
         self.actor_optimizer.step()
 
-        for param, target_param in zip(self.critic1.parameters(), self.target_critic1.parameters()):
-            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+        # 更新alpha值
+        alpha_loss = torch.mean((entropy - self.target_entropy).detach() * self.log_alpha.exp())
+        self.log_alpha_optimizer.zero_grad()
+        alpha_loss.backward()
+        self.log_alpha_optimizer.step()
 
-        for param, target_param in zip(self.critic2.parameters(), self.target_critic2.parameters()):
-            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+        self.soft_update(self.critic_1, self.target_critic_1)
+        self.soft_update(self.critic_2, self.target_critic_2)
 
-    def save(self, filename):
-        torch.save(self.actor.state_dict(), filename + "_actor")
-        torch.save(self.critic1.state_dict(), filename + "_critic1")
-        torch.save(self.critic2.state_dict(), filename + "_critic2")
-        torch.save(self.target_critic1.state_dict(), filename + "_target_critic1")
-        torch.save(self.target_critic2.state_dict(), filename + "_target_critic2")
+        actor_lr = 1e-3
+        critic_lr = 1e-2
+        alpha_lr = 1e-2
+        num_episodes = 200
+        hidden_dim = 128
+        gamma = 0.98
+        tau = 0.005  # 软更新参数
+        buffer_size = 10000
+        minimal_size = 500
+        batch_size = 64
+        target_entropy = -1
+        device = torch.device("cuda") if torch.cuda.is_available() else torch.device(
+            "cpu")
 
-    def load(self, filename):
-        self.actor.load_state_dict(torch.load(filename + "_actor"))
-        self.critic1.load_state_dict(torch.load(filename + "_critic1"))
-        self.critic2.load_state_dict(torch.load(filename + "_critic2"))
-        self.target_critic1.load_state_dict(torch.load(filename + "_target_critic1"))
-        self.target_critic2.load_state_dict(torch.load(filename + "_target_critic2"))
+        env_name = 'CartPole-v0'
+        env = gym.make(env_name)
+        random.seed(0)
+        np.random.seed(0)
+        env.seed(0)
+        torch.manual_seed(0)
+        replay_buffer = rl_utils.ReplayBuffer(buffer_size)
+        state_dim = env.observation_space.shape[0]
+        action_dim = env.action_space.n
+        agent = SAC(state_dim, hidden_dim, action_dim, actor_lr, critic_lr, alpha_lr,
+                    target_entropy, tau, gamma, device)
 
+        return_list = rl_utils.train_off_policy_agent(env, agent, num_episodes,
+                                                      replay_buffer, minimal_size,
+                                                      batch_size)
+actor_lr = 1e-3
+critic_lr = 1e-2
+alpha_lr = 1e-2
+num_episodes = 200
+hidden_dim = 128
+gamma = 0.98
+tau = 0.005  # 软更新参数
+buffer_size = 10000
+minimal_size = 500
+batch_size = 64
+target_entropy = -1
+device = torch.device("cuda") if torch.cuda.is_available() else torch.device(
+    "cpu")
 
-def flatten_state_dict(state_dict):
-    state = []
-    for key in state_dict:
-        if isinstance(key, float):
-            key = f"{key:.2f}"  # 将浮点数键转换为字符串
-        value = state_dict[key]
-        if hasattr(value, 'flatten'):
-            state.append(value.flatten())
-        else:
-            print(f"Key: {key}, Value: {value}, Type: {type(value)}")
-    return np.concatenate(state)
+env_name = 'CartPole-v0'
+env = gym.make(env_name)
+random.seed(0)
+np.random.seed(0)
+env.seed(0)
+torch.manual_seed(0)
+replay_buffer = rl_utils.ReplayBuffer(buffer_size)
+state_dim = env.observation_space.shape[0]
+action_dim = env.action_space.n
+agent = SAC(state_dim, hidden_dim, action_dim, actor_lr, critic_lr, alpha_lr,
+            target_entropy, tau, gamma, device)
 
-
-if __name__ == "__main__":
-    env = CustomEnv()  # 确保你的环境类名和实例化方式正确
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    # 获取 observation_space 和 action_space 的具体形状
-    obs_space = env.observation_space
-    act_space = env.action_space
-
-    # 计算 state_dim 和 action_dim
-    if isinstance(obs_space, Dict):
-        state_dim = sum([np.prod(space.shape) for space in obs_space.spaces.values()])
-    else:
-        state_dim = np.prod(obs_space.shape)
-
-    if isinstance(act_space, MultiBinary):
-        action_dim = act_space.n
-    else:
-        action_dim = np.prod(act_space.shape)
-
-    max_action = 1  # 对于 MultiBinary 动作空间，最大值为1
-
-    sac = SAC(state_dim, action_dim, max_action, env)
-
-    num_episodes = 1000
-    max_timesteps = 200
-    batch_size = 256
-
-    for episode in range(num_episodes):
-        state_dict, _ = env.reset()
-        try:
-            state = flatten_state_dict(state_dict)
-        except Exception as e:
-            print(f"Error in flattening state_dict: {e}")
-            for key in state_dict:
-                try:
-                    value = state_dict[key]
-                    print(f"Key: {key}, Value: {value}, Type: {type(value)}")
-                except Exception as inner_e:
-                    print(f"Error accessing key: {key} with exception: {inner_e}")
-            raise e
-
-        episode_reward = 0
-
-        for t in range(max_timesteps):
-            action = sac.select_action(state)
-            action = action[:action_dim]  # 确保动作维度与动作空间匹配
-            next_state_dict, reward, done, _, _ = env.step(action)
-            try:
-                next_state = flatten_state_dict(next_state_dict)
-            except Exception as e:
-                print(f"Error in flattening next_state_dict: {e}")
-                for key in next_state_dict:
-                    try:
-                        value = next_state_dict[key]
-                        print(f"Key: {key}, Value: {value}, Type: {type(value)}")
-                    except Exception as inner_e:
-                        print(f"Error accessing key: {key} with exception: {inner_e}")
-                raise e
-
-            not_done = 1.0 if not done else 0.0
-
-            sac.replay_buffer.add(state, action, next_state, reward, not_done)
-            state = next_state
-            episode_reward += reward
-
-            if len(sac.replay_buffer) > batch_size:
-                sac.train(batch_size)
-
-            if done:
-                break
-
-        print(f"Episode {episode + 1}, Reward: {episode_reward}")
-
-        if (episode + 1) % 100 == 0:
-            sac.save(f"sac_checkpoint_{episode + 1}")
-
-    env.close()
+return_list = rl_utils.train_off_policy_agent(env, agent, num_episodes,
+                                              replay_buffer, minimal_size,
+                                              batch_size)

@@ -1,5 +1,6 @@
 import pandas as pd
 import torch
+import os
 from typing import Optional, Tuple
 
 
@@ -10,8 +11,8 @@ class Env:
         self.NUM_SATELLITES = 301  # 卫星数量
         self.NUM_GROUND_USER = 10  # 地面用户数量
         self.TOTAL_TIME = 3000  # 总模拟时间，单位：秒
-        self.NUM_TIME_SLOTS = 60  # 时间段的划分数量
-        self.TIME_SLOT_DURATION = self.TOTAL_TIME // self.NUM_TIME_SLOTS  # 每个时间段的持续时间
+        self.NUM_TIME_SLOTS = 61  # 时间段的划分数量
+        self.TIME_SLOT_DURATION = 50  # 每个时间段的持续时间
         self.communication_frequency = torch.tensor(18.5e9)  # 通信频率为18.5GHz
         self.total_bandwidth = 250e6  # 总带宽为250MHz
         self.noise_temperature = 213.15  # 系统的噪声温度为213.15开尔文
@@ -41,6 +42,14 @@ class Env:
             "elevation_angles": self.elevation_angle_space,
             "altitudes": self.altitude_space
         }
+        self.action_dim = self.NUM_SATELLITES * self.NUM_GROUND_USER
+        self.state_dim = (
+                self.NUM_SATELLITES * self.NUM_GROUND_USER * 2 +  # coverage_space
+                self.NUM_SATELLITES * self.NUM_GROUND_USER +  # previous_access_strategy_space
+                self.NUM_GROUND_USER +  # switch_count_space
+                self.NUM_SATELLITES * self.NUM_GROUND_USER +  # elevation_angle_space
+                self.NUM_SATELLITES  # altitude_space
+        )
 
         # 初始化卫星和用户的位置
         self.satellite_heights = self.initialize_altitude()
@@ -52,7 +61,7 @@ class Env:
         self.current_time_step = 0
         self.switch_count = torch.zeros(self.NUM_GROUND_USER, dtype=torch.int)
 
-        # 初始化用户传输速率矩阵
+        # 初始化用户需求传输速率矩阵
         self.user_rate = torch.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER), dtype=torch.float32)
 
         # 初始化信道容量矩阵
@@ -60,13 +69,11 @@ class Env:
 
         # 初始化用户需求速率
         self.user_demand_rate = torch.empty((self.NUM_GROUND_USER, self.NUM_TIME_SLOTS), dtype=torch.float32)
-        self.user_demand_rate.uniform_(1e6, 10e6)
+        self.user_demand_rate.uniform_(1e9, 10e9)
 
         # 使用 GPU 加速
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.to(self.device)
-
-        print("Environment initialized")
 
     def to(self, device):
         self.coverage_indicator = self.coverage_indicator.to(device)
@@ -88,27 +95,62 @@ class Env:
         for time_slot in range(self.NUM_TIME_SLOTS):
             for i in range(self.NUM_SATELLITES):
                 for j in range(self.NUM_GROUND_USER):
-                    eval_angle[time_slot, j, i] = df.iloc[1 + i * self.NUM_GROUND_USER + j, time_slot]
+                    eval_angle[time_slot, j, i] = df.iloc[i * self.NUM_GROUND_USER + j, time_slot]
 
         print(f"Initialized eval_angle with shape: {eval_angle.shape}")  # [TIME_SLOTS,NUM_GROUND_USER,NUM_SATELLITES]
         return eval_angle
 
     def initialize_altitude(self):
+        # 检查CSV文件是否存在
+        csv_file = 'alt_data.csv'
+        if not os.path.exists(csv_file):
+            raise FileNotFoundError(f"{csv_file} does not exist.")
         # 从CSV文件读取卫星的高度数据
-        df = pd.read_csv('alt_data.csv')
+        try:
+            df = pd.read_csv(csv_file)
+        except Exception as e:
+            raise IOError(f"Error reading {csv_file}: {e}")
+
+        print(f"DataFrame shape: {df.shape}")
+
+        # 检查 DataFrame 的形状是否符合预期
+        if df.shape[0] < self.NUM_SATELLITES or df.shape[1] < self.NUM_TIME_SLOTS:
+            raise ValueError(
+                f"DataFrame shape {df.shape} is not sufficient for the given NUM_SATELLITES and NUM_TIME_SLOTS")
+
         sat_heights = torch.zeros((self.NUM_TIME_SLOTS, self.NUM_SATELLITES), dtype=torch.float32)
 
         # 填充 sat_heights 数组
         for time_slot in range(self.NUM_TIME_SLOTS):
             for i in range(self.NUM_SATELLITES):
-                sat_heights[time_slot, i] = df.iloc[1 + i, time_slot]
+                try:
+                    # 确保从 DataFrame 中读取的数据是数值类型
+                    value = float(df.iloc[i, time_slot])
+                    sat_heights[time_slot, i] = value
+                except ValueError:
+                    raise ValueError(f"Non-numeric data found at row {1 + i}, column {time_slot}")
+                except IndexError:
+                    raise IndexError(f"Index out of bounds: row {1 + i}, column {time_slot}")
 
-        print(f"Initialized sat_heights with shape: {sat_heights.shape}")  # [NUM_TIME_SLOTS,NUM_SATELLITES]
+        print(f"Initialized sat_heights with shape: {sat_heights.shape}")  # [NUM_TIME_SLOTS, NUM_SATELLITES]
         return sat_heights
 
     def initialize_coverage(self):
+        csv_file = 'coverage_data.csv'
+        if not os.path.exists(csv_file):
+            raise FileNotFoundError(f"{csv_file} does not exist.")
+        try:
+            # 跳过第一行（时间戳行）
+            df = pd.read_csv(csv_file, header=None, skiprows=1)
+        except Exception as e:
+            raise IOError(f"Error reading {csv_file}: {e}")
+        print(f"DataFrame shape: {df.shape}")
+
+        if df.shape[0] < self.NUM_GROUND_USER * self.NUM_SATELLITES or df.shape[1] < self.NUM_TIME_SLOTS:
+            raise ValueError(
+                f"DataFrame shape {df.shape} is not sufficient for the given NUM_SATELLITES and NUM_TIME_SLOTS")
+
         # 从CSV文件读取覆盖数据
-        df = pd.read_csv('coverage_data.csv')
         coverage = torch.zeros((self.NUM_TIME_SLOTS, self.NUM_GROUND_USER, self.NUM_SATELLITES, 2), dtype=torch.float32)
 
         # 填充 coverage 数组
@@ -116,7 +158,7 @@ class Env:
             for i in range(self.NUM_SATELLITES):
                 for j in range(self.NUM_GROUND_USER):
                     # 获取覆盖字符串并解析成整数
-                    coverage_str = df.iloc[1 + i * self.NUM_GROUND_USER + j, time_slot]
+                    coverage_str = df.iloc[j + i * self.NUM_GROUND_USER, time_slot]
                     beam_1, beam_2 = map(int, coverage_str.strip('()').split(','))
                     coverage[time_slot, j, i, 0] = beam_1
                     coverage[time_slot, j, i, 1] = beam_2
@@ -138,8 +180,7 @@ class Env:
             return self.terminate()
 
         # 更新接入决策变量
-        self.access_decision[:, :, self.current_time_step] = action_matrix
-
+        self.access_decision = action_matrix
         # 检查并更新切换次数
         if self.current_time_step > 0:
             self.update_switch_count(action_matrix)
@@ -279,9 +320,10 @@ class Env:
         print(f"Pathloss matrix shape: {pathloss.shape}")
         return pathloss  # Shape: [NUM_TIME_SLOTS, NUM_SATELLITES, NUM_GROUND_USER]
 
-    def calculate_CNR_matrix(self, time_slot: int, action_matrix: torch.Tensor) -> torch.Tensor:
-        # 计算路径损耗矩阵，假设其形状为 [NUM_SATELLITES, NUM_GROUND_USERS]
-        loss = self.calculate_DL_pathloss_matrix(torch.tensor(time_slot))
+    #CNR的计算需要根据决策变量来决定，所以应该只记录当前slot下的CNR情况
+    def calculate_CNR_matrix(self, time_slot: int, action_matrix: torch.Tensor, distance_matrix: torch.Tensor) -> torch.Tensor:
+        # 计算路径损耗矩阵，其形状为 [NUM_TIME_SLOTS, NUM_SATELLITES, NUM_GROUND_USER]
+        loss = self.calculate_DL_pathloss_matrix(distance_matrix)
 
         # 计算接收功率（单位：瓦特），假设 self.EIRP_watts 和 self.receive_benefit_ground 是标量
         received_power_watts = self.EIRP_watts * 10 ** (self.receive_benefit_ground / 10) / (10 ** (loss / 10))
