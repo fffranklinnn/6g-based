@@ -111,7 +111,7 @@ class Env:
         except Exception as e:
             raise IOError(f"Error reading {csv_file}: {e}")
 
-        print(f"DataFrame shape: {df.shape}")
+        print(f"alt DataFrame shape: {df.shape}")
 
         # 检查 DataFrame 的形状是否符合预期
         if df.shape[0] < self.NUM_SATELLITES or df.shape[1] < self.NUM_TIME_SLOTS:
@@ -144,7 +144,7 @@ class Env:
             df = pd.read_csv(csv_file, header=None, skiprows=1)
         except Exception as e:
             raise IOError(f"Error reading {csv_file}: {e}")
-        print(f"DataFrame shape: {df.shape}")
+        print(f"cov DataFrame shape: {df.shape}")
 
         if df.shape[0] < self.NUM_GROUND_USER * self.NUM_SATELLITES or df.shape[1] < self.NUM_TIME_SLOTS:
             raise ValueError(
@@ -257,10 +257,12 @@ class Env:
 
     def get_observation(self) -> torch.Tensor:
         if self.current_time_step >= len(self.coverage_indicator):
-            return torch.zeros(self.get_observation_shape(), device=self.device)
+            return torch.zeros(self._calculate_observation_shape(), device=self.device)
 
         coverage = self.coverage_indicator[self.current_time_step].flatten().float()
-        previous_access_strategy = self.access_decision[:, :, self.current_time_step - 1].flatten().float() if self.current_time_step > 0 else torch.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER), device=self.device).flatten().float()
+        previous_access_strategy = self.access_decision[:, :,
+                                   self.current_time_step - 1].flatten().float() if self.current_time_step > 0 else torch.zeros(
+            (self.NUM_SATELLITES, self.NUM_GROUND_USER), device=self.device).flatten().float()
         switch_count = self.switch_count.float()
         elevation_angles = self.eval_angle[self.current_time_step].flatten().float()
         altitudes = self.satellite_heights[self.current_time_step].float()
@@ -269,7 +271,7 @@ class Env:
         print(f"Observation concatenated shape: {observation.shape}")
         return observation
 
-    def get_observation_shape(self):
+    def _calculate_observation_shape(self):
         shape = torch.cat([
             self.coverage_indicator[0].flatten().float(),
             torch.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER), device=self.device).flatten().float(),
@@ -394,7 +396,7 @@ class Env:
         return data
 
     def terminate(self) -> Tuple[torch.Tensor, float, bool, dict]:
-        observation = torch.zeros(self.get_observation_shape(), device=self.device)
+        observation = torch.zeros(self._calculate_observation_shape(), device=self.device)
         reward = 0.0
         information = {
             'current_time_step': self.current_time_step,

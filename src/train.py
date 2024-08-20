@@ -11,7 +11,7 @@ def main():
     print(f"Using device: {device}")
 
     # 获取正确的状态维度
-    raw_state_dim = env.get_observation_shape()[0]
+    raw_state_dim = env._calculate_observation_shape()[0]
     flattened_state_dim = flatten_state(torch.zeros(raw_state_dim)).numel()
     print(f"Flattened state dimension: {flattened_state_dim}")
 
