@@ -227,8 +227,8 @@ class Env:
         # 重置覆盖指示变量和接入决策变量
         self.coverage_indicator = torch.zeros((self.NUM_TIME_SLOTS, self.NUM_GROUND_USER, self.NUM_SATELLITES),
                                               dtype=torch.int, device=self.device)
-        self.access_decision = torch.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER, self.NUM_TIME_SLOTS),
-                                           dtype=torch.int, device=self.device)
+        self.access_decision = torch.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER), dtype=torch.int,
+                                           device=self.device)
 
         # 初始化覆盖指示变量
         self.initialize_coverage_indicator()
@@ -237,17 +237,17 @@ class Env:
         self.switch_count = torch.zeros(self.NUM_GROUND_USER, dtype=torch.int, device=self.device)
 
         # 重置用户传输速率
-        self.user_rate = torch.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER, self.NUM_TIME_SLOTS),
-                                     dtype=torch.float32, device=self.device)
+        self.user_rate = torch.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER), dtype=torch.float32,
+                                     device=self.device)
 
         # 重置信道容量矩阵
-        self.channel_capacity = torch.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER, self.NUM_TIME_SLOTS),
-                                            dtype=torch.float32, device=self.device)
+        self.channel_capacity = torch.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER), dtype=torch.float32,
+                                            device=self.device)
 
         # 重置用户需求速率
         self.user_demand_rate = torch.empty((self.NUM_GROUND_USER, self.NUM_TIME_SLOTS), dtype=torch.float32,
                                             device=self.device)
-        self.user_demand_rate.uniform_(1e6, 10e6)
+        self.user_demand_rate.uniform_(1e9, 10e9)
 
         # 获取初始观察
         observation = self.get_observation()

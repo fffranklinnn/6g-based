@@ -10,11 +10,15 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    state_dim = env.get_observation_shape()[0]
+    # 获取正确的状态维度
+    raw_state_dim = env.get_observation_shape()[0]
+    flattened_state_dim = flatten_state(torch.zeros(raw_state_dim)).numel()
+    print(f"Flattened state dimension: {flattened_state_dim}")
+
     action_dim = env.action_space.numel()  # 确保获取正确的动作维度
     max_action = 1  # 对于 MultiBinary 动作空间，最大值为1
 
-    sac = SAC(state_dim, action_dim, max_action, device)  # 传递 device 参数
+    sac = SAC(flattened_state_dim, action_dim, max_action, device)  # 传递正确的状态维度和 device 参数
 
     num_episodes = 100
     max_timesteps = 60
@@ -45,7 +49,7 @@ def main():
             episode_reward += reward
 
             if len(sac.replay_buffer) > batch_size:
-                sac.train(batch_size)
+                sac.update_parameters(batch_size)
 
             if done:
                 break
