@@ -26,7 +26,7 @@ class Env:
         self.angle_threshold = 15  # 单位：度
         self.w1 = 1  # 切换次数的权重
         self.w2 = 1  # 用户传输速率的权重
-        self.r_thr = -5  # 最低的CINR阈值，单位：dB
+        # self.r_thr = -5  # 最低的CINR阈值，单位：dB
 
         # 定义动作空间和观察空间
         self.action_space = torch.zeros(self.NUM_SATELLITES * self.NUM_GROUND_USER, dtype=torch.int)
@@ -225,13 +225,12 @@ class Env:
         self.current_time_step = 0
 
         # 重置覆盖指示变量和接入决策变量
-        self.coverage_indicator = torch.zeros((self.NUM_TIME_SLOTS, self.NUM_GROUND_USER, self.NUM_SATELLITES),
-                                              dtype=torch.int, device=self.device)
+        self.coverage_indicator = self.initialize_coverage()
         self.access_decision = torch.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER), dtype=torch.int,
                                            device=self.device)
 
         # 初始化覆盖指示变量
-        self.initialize_coverage_indicator()
+        # self.initialize_coverage_indicator()
 
         # 重置切换次数
         self.switch_count = torch.zeros(self.NUM_GROUND_USER, dtype=torch.int, device=self.device)
@@ -267,18 +266,36 @@ class Env:
 
         observation = torch.cat([coverage, previous_access_strategy, switch_count, elevation_angles, altitudes])
         print(f"Observation concatenated shape: {observation.shape}")
+        # 打印形状信息以帮助调试
+        print(
+            f"Shapes - coverage: {coverage.shape}, previous_access_strategy: {previous_access_strategy.shape}, switch_count: {switch_count.shape}, elevation_angles: {elevation_angles.shape}, altitudes: {altitudes.shape}")
         return observation
 
     def _calculate_observation_shape(self):
-        # 保持与get_observation中的逻辑一致
-        shape = torch.Size([
-            self.coverage_indicator[0].numel() +  # 使用numel获取元素总数来代替flatten().shape[0]
-            self.access_decision.numel() +  # 假设access_decision在reset时不会改变形状
-            self.switch_count.numel() +
-            self.eval_angle[0].numel() +
-            self.satellite_heights[0].numel()
-        ])
-        print(f"Observation shape: {shape}")
+        # 计算每个组成部分的尺寸
+        coverage_indicator_numel = self.coverage_indicator[0].numel()
+        access_decision_numel = self.access_decision.numel()
+        switch_count_numel = self.switch_count.numel()
+        eval_angle_numel = self.eval_angle[0].numel()
+        satellite_heights_numel = self.satellite_heights[0].numel()
+
+        # 打印每个组成部分的尺寸
+        print(f"Coverage indicator numel: {coverage_indicator_numel}")
+        print(f"Access decision numel: {access_decision_numel}")
+        print(f"Switch count numel: {switch_count_numel}")
+        print(f"Elevation angles numel: {eval_angle_numel}")
+        print(f"Satellite heights numel: {satellite_heights_numel}")
+
+        # 计算总的观测空间尺寸
+        total_numel = (coverage_indicator_numel +
+                       access_decision_numel +
+                       switch_count_numel +
+                       eval_angle_numel +
+                       satellite_heights_numel)
+        shape = torch.Size([total_numel])
+
+        # 打印总的观测空间尺寸
+        print(f"Total observation shape: {shape}")
         return shape
 
     def calculate_reward(self, action_matrix: torch.Tensor) -> float:
@@ -287,10 +304,10 @@ class Env:
             for user_index in range(self.NUM_GROUND_USER):
                 if action_matrix[satellite_index, user_index] == 1:
                     rate = self.user_rate[satellite_index, user_index, self.current_time_step]
-                    if rate >= self.r_thr:
-                        reward += self.w2 * rate
-                    else:
-                        reward -= self.w1 * self.switch_count[user_index]
+                    # if rate >= self.r_thr:
+                    reward += self.w2 * rate
+                    # else:
+                    reward -= self.w1 * self.switch_count[user_index]
         print(f"Calculated reward: {reward}")
         return reward
 
@@ -375,14 +392,14 @@ class Env:
                     self.coverage_indicator[current_time_slot, user_index, satellite_index] = 0
         print(f"Updated coverage indicator for time slot {current_time_slot}")
 
-    def calculate_actual_rate_matrix(self, time_slot: int, action_matrix: torch.Tensor) -> torch.Tensor:
+    def calculate_actual_rate_matrix(self, time_slot: int) -> torch.Tensor:
         capacity = self.channel_capacity[:, :, time_slot]
         demand = self.user_demand_rate[:, time_slot]
         actual_rate = torch.min(capacity, demand)
         print(f"Actual rate matrix shape: {actual_rate.shape}")
         return actual_rate
 
-    def render(self, mode='human'):
+    def render(self):
         print(f"Current time step: {self.current_time_step}")
 
     def close(self):
@@ -434,7 +451,6 @@ class Env:
             f"Updated channel capacity for time slot {self.current_time_step}: {self.channel_capacity[:, :, self.current_time_step]}")
 
         # 更新用户速率，假设 self.user_rate 的形状为 [NUM_SATELLITES, NUM_GROUND_USERS, TIME_STEPS]
-        self.user_rate[:, :, self.current_time_step] = self.calculate_actual_rate_matrix(self.current_time_step,
-                                                                                         action_matrix)
+        self.user_rate[:, :, self.current_time_step] = self.calculate_actual_rate_matrix(self.current_time_step)
         print(
             f"Updated user rate for time slot {self.current_time_step}: {self.user_rate[:, :, self.current_time_step]}")
