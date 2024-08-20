@@ -328,14 +328,14 @@ class Env:
         # 调整形状为 [NUM_TIME_SLOTS, NUM_GROUND_USER, NUM_SATELLITES]
         distance = distance.squeeze()  # 去掉所有单维度条目，如果有的话
 
-        # print(f"Distance matrix shape: {distance.shape}")
+        print(f"Distance matrix shape: {distance.shape}")
         return distance  # Shape: [NUM_TIME_SLOTS, NUM_GROUND_USER, NUM_SATELLITES]
 
     def calculate_DL_pathloss_matrix(self, distance_matrix: torch.Tensor) -> torch.Tensor:
         # 计算路径损耗矩阵
         pathloss = 20 * torch.log10(distance_matrix) + 20 * torch.log10(self.communication_frequency) - 147.55
 
-        # print(f"Pathloss matrix shape: {pathloss.shape}")
+        print(f"Pathloss matrix shape: {pathloss.shape}")
         return pathloss  # Shape: [NUM_TIME_SLOTS, NUM_SATELLITES, NUM_GROUND_USER]
 
     #CNR的计算需要根据决策变量来决定，所以应该只记录当前slot下的CNR情况
@@ -351,7 +351,7 @@ class Env:
 
         # 返回 CNR 的对数值（单位：dB），保持矩阵形状
         CNR = 10 * torch.log10(CNR_linear)
-        # print(f"CNR matrix shape: {CNR.shape}")
+        print(f"CNR matrix shape: {CNR.shape}")  # [10,301,301]
         return CNR
 
     def calculate_interference_matrix(self, time_slot: int, action_matrix: torch.Tensor) -> torch.Tensor:
@@ -380,17 +380,18 @@ class Env:
                 total_interference_power_watts += interference_power_watts
 
         total_interference_dBm = 10 * torch.log10(torch.tensor(total_interference_power_watts).clone().detach()) + 30
-        print(f"Calculated interference: {total_interference_dBm.item()} dBm")
+        # print(f"Calculated interference: {total_interference_dBm.item()} dBm")
         return total_interference_dBm.item()
 
-    def update_coverage_indicator(self, current_time_slot: int):
-        for user_index in range(self.NUM_GROUND_USER):
-            for satellite_index in range(self.NUM_SATELLITES):
-                if self.eval_angle[current_time_slot, user_index, satellite_index] > self.angle_threshold:
-                    self.coverage_indicator[current_time_slot, user_index, satellite_index] = 1
-                else:
-                    self.coverage_indicator[current_time_slot, user_index, satellite_index] = 0
-        print(f"Updated coverage indicator for time slot {current_time_slot}")
+    # 覆盖变量不需要修改
+    # def update_coverage_indicator(self, current_time_slot: int):
+    #     for user_index in range(self.NUM_GROUND_USER):
+    #         for satellite_index in range(self.NUM_SATELLITES):
+    #             if self.eval_angle[current_time_slot, user_index, satellite_index] > self.angle_threshold:
+    #                 self.coverage_indicator[current_time_slot, user_index, satellite_index] = 1
+    #             else:
+    #                 self.coverage_indicator[current_time_slot, user_index, satellite_index] = 0
+    #     print(f"Updated coverage indicator for time slot {current_time_slot}")
 
     def calculate_actual_rate_matrix(self, time_slot: int) -> torch.Tensor:
         capacity = self.channel_capacity[:, :, time_slot]
