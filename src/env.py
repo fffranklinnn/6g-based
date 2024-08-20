@@ -199,7 +199,7 @@ class Env:
         is_done = self.current_time_step >= self.NUM_TIME_SLOTS
 
         # 获取观察
-        observation = self.get_observation() if not is_done else torch.zeros(self.get_observation_shape(),
+        observation = self.get_observation() if not is_done else torch.zeros(self._calculate_observation_shape(),
                                                                              device=self.device)
 
         # 可选的额外信息
@@ -260,25 +260,24 @@ class Env:
             return torch.zeros(self._calculate_observation_shape(), device=self.device)
 
         coverage = self.coverage_indicator[self.current_time_step].flatten().float()
-        previous_access_strategy = self.access_decision[:, :,
-                                   self.current_time_step - 1].flatten().float() if self.current_time_step > 0 else torch.zeros(
-            (self.NUM_SATELLITES, self.NUM_GROUND_USER), device=self.device).flatten().float()
-        switch_count = self.switch_count.float()
+        previous_access_strategy = self.access_decision.flatten().float()
+        switch_count = self.switch_count.float()  # 这已经是1D张量，不需要改动
         elevation_angles = self.eval_angle[self.current_time_step].flatten().float()
-        altitudes = self.satellite_heights[self.current_time_step].float()
+        altitudes = self.satellite_heights[self.current_time_step].flatten().float()  # 确保这里的处理逻辑是正确的，根据你的数据结构可能需要调整
 
         observation = torch.cat([coverage, previous_access_strategy, switch_count, elevation_angles, altitudes])
         print(f"Observation concatenated shape: {observation.shape}")
         return observation
 
     def _calculate_observation_shape(self):
-        shape = torch.cat([
-            self.coverage_indicator[0].flatten().float(),
-            torch.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER), device=self.device).flatten().float(),
-            self.switch_count.float(),
-            self.eval_angle[0].flatten().float(),
-            self.satellite_heights[0].float()
-        ]).shape
+        # 保持与get_observation中的逻辑一致
+        shape = torch.Size([
+            self.coverage_indicator[0].numel() +  # 使用numel获取元素总数来代替flatten().shape[0]
+            self.access_decision.numel() +  # 假设access_decision在reset时不会改变形状
+            self.switch_count.numel() +
+            self.eval_angle[0].numel() +
+            self.satellite_heights[0].numel()
+        ])
         print(f"Observation shape: {shape}")
         return shape
 
@@ -406,14 +405,20 @@ class Env:
         return observation, reward, True, information
 
     def update_switch_count(self, action_matrix: torch.Tensor):
-        previous_action_matrix = self.access_decision[:, :, self.current_time_step - 1]
-        switch_matrix = (action_matrix != previous_action_matrix).int()
-        self.switch_count += switch_matrix.sum(dim=0)
-        print(f"Updated switch count: {self.switch_count}")
+        if self.current_time_step > 0:
+            # 计算当前决策和前一个决策不同的位置
+            switch_matrix = (action_matrix != self.previous_access_strategy_space).int()
+            # 更新切换次数
+            self.switch_count += switch_matrix.sum(dim=0)
+            print(f"Updated switch count: {self.switch_count}")
+
+        # 在每次调用结束时，将当前的接入决策保存为下一次的前一个接入决策
+        self.previous_access_strategy_space = action_matrix.clone()
 
     def update_rates_and_capacity(self, action_matrix: torch.Tensor):
+        distance_matrix = self.calculate_distance_matrix()[self.current_time_step]
         # 计算 CNR 矩阵，假设其形状为 [NUM_SATELLITES, NUM_GROUND_USERS]
-        CNR = self.calculate_CNR_matrix(self.current_time_step, action_matrix)
+        CNR = self.calculate_CNR_matrix(self.current_time_step, action_matrix, distance_matrix)
         print(f"CNR matrix shape: {CNR.shape}, values: {CNR}")
 
         # 计算 INR 矩阵，假设其形状为 [NUM_SATELLITES, NUM_GROUND_USERS]
