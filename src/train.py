@@ -13,7 +13,7 @@ def main():
     # 获取正确的状态维度
     raw_state_dim = env._calculate_observation_shape()[0]
     flattened_state_dim = flatten_state(torch.zeros(raw_state_dim)).numel()
-    print(f"Flattened state dimension: {flattened_state_dim}")
+    # print(f"Flattened state dimension: {flattened_state_dim}")
 
     action_dim = env.action_space.numel()  # 确保获取正确的动作维度
     max_action = 1  # 对于 MultiBinary 动作空间，最大值为1
@@ -37,7 +37,7 @@ def main():
             # 确保action是一个numpy数组并且形状正确
             action = action.cpu().numpy()
             action = action.reshape((env.NUM_SATELLITES, env.NUM_GROUND_USER))
-            print(f"Action shape after reshape: {action.shape}")
+            # print(f"Action shape after reshape: {action.shape}")
 
             next_state, reward, done, _ = env.step(action)  # 保持动作为numpy类型
             next_state = flatten_state(next_state).to(device)  # 平整并移至正确的设备
