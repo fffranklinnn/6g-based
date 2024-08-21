@@ -84,6 +84,7 @@ class Env:
         self.user_demand_rate = self.user_demand_rate.to(device)
         self.satellite_heights = self.satellite_heights.to(device)
         self.eval_angle = self.eval_angle.to(device)
+        self.previous_access_strategy_space = self.previous_access_strategy_space.to(self.device)
         # print(f"Moved to device: {device}")
 
     def initialize_angle(self):
@@ -299,37 +300,41 @@ class Env:
 
     def calculate_reward(self, action_matrix: torch.Tensor) -> float:
         reward = 0
+        # 假设 self.user_rate 已经不再使用时间维度
         for satellite_index in range(self.NUM_SATELLITES):
             for user_index in range(self.NUM_GROUND_USER):
                 if action_matrix[satellite_index, user_index] == 1:
-                    rate = self.user_rate[satellite_index, user_index, self.current_time_step]
-                    # if rate >= self.r_thr:
-                    reward += self.w2 * rate
-                    # else:
-                    reward -= self.w1 * self.switch_count[user_index]
+                    rate = self.user_rate[satellite_index, user_index]
+                    reward += self.w2 * rate  # 增加奖励，基于用户速率
+
+        # 减少奖励，基于用户切换次数
+        # 注意：这里假设 self.switch_count 已经被更新以反映最新的切换情况
+        reward -= self.w1 * sum(self.switch_count)
+
         print(f"Calculated reward: {reward}")
         return reward
 
     def calculate_distance_matrix(self) -> torch.Tensor:
         # 获取所有时间段的卫星高度和仰角
-        sat_heights = self.satellite_heights  # Shape: [NUM_TIME_SLOTS, NUM_SATELLITES]
-        eval_angles = self.eval_angle  # Shape: [NUM_TIME_SLOTS, NUM_GROUND_USER, NUM_SATELLITES]
+        sat_heights = self.satellite_heights  # 假设形状: [61, 301]
+        eval_angles = self.eval_angle  # 假设形状: [61, 10, 301]
 
+        # print(f"Original sat_heights shape: {sat_heights.shape}")  # 打印原始sat_heights形状
+        # print(f"Original eval_angles shape: {eval_angles.shape}")  # 打印原始eval_angles形状
         # 通过调整形状来启用广播
-        sat_heights = sat_heights.unsqueeze(1).unsqueeze(3)  # Shape: [NUM_TIME_SLOTS, 1, NUM_SATELLITES, 1]
-        eval_angles = eval_angles.unsqueeze(2)  # Shape: [NUM_TIME_SLOTS, NUM_GROUND_USER, 1, NUM_SATELLITES]
+        sat_heights = sat_heights.unsqueeze(1)  # 形状变为: [61, 1, 301]
+        # 注意：这里不再对 eval_angles 进行形状调整，因为它已经是预期形状
+        # print(f"Adjusted sat_heights shape for broadcasting: {sat_heights.shape}")  # 打印调整后的sat_heights形状
 
         # 计算距离矩阵
         distance = self.radius_earth * (self.radius_earth + sat_heights) / torch.sqrt(
             (self.radius_earth + sat_heights) ** 2 - self.radius_earth ** 2 * torch.cos(torch.deg2rad(eval_angles)) ** 2
         )
+        # print(f"Distance matrix shape: {distance.shape}")  # 打印距离矩阵形状
+        # 断言验证最终形状
+        assert distance.shape == (61, 10, 301), f"Unexpected shape: {distance.shape}"
 
-        # 由于正确调整了形状，现在不需要squeeze和错误的permute
-        # 调整形状为 [NUM_TIME_SLOTS, NUM_GROUND_USER, NUM_SATELLITES]
-        distance = distance.squeeze()  # 去掉所有单维度条目，如果有的话
-
-        print(f"Distance matrix shape: {distance.shape}")
-        return distance  # Shape: [NUM_TIME_SLOTS, NUM_GROUND_USER, NUM_SATELLITES]
+        return distance
 
     def calculate_DL_pathloss_matrix(self, distance_matrix: torch.Tensor) -> torch.Tensor:
         # 计算路径损耗矩阵
@@ -361,7 +366,7 @@ class Env:
                 if action_matrix[satellite_index, user_index] == 1:
                     interference_matrix[satellite_index, user_index] = self.calculate_interference(time_slot, user_index, satellite_index)
         # print(f"Interference matrix shape: {interference_matrix.shape}")
-        return interference_matrix
+        return interference_matrix.transpose(0, 1)
 
     def calculate_interference(self, time_slot: int, user_index: int, accessed_satellite_index: int) -> float:
         total_interference_power_watts = 0
@@ -446,12 +451,11 @@ class Env:
         # 确保 CNR 和 INR 的形状一致
         assert CNR.shape == INR.shape, f"CNR shape {CNR.shape} does not match INR shape {INR.shape}"
 
-        # 更新信道容量，假设 self.channel_capacity 的形状为 [NUM_SATELLITES, NUM_GROUND_USERS, TIME_STEPS]
-        self.channel_capacity[:, :, self.current_time_step] = self.total_bandwidth * torch.log2(1.0 + CNR / (INR + 1.0))
-        print(
-            f"Updated channel capacity for time slot {self.current_time_step}: {self.channel_capacity[:, :, self.current_time_step]}")
+        # 直接更新信道容量，不考虑时间维度
+        self.channel_capacity = self.total_bandwidth * torch.log2(1.0 + CNR / (INR + 1.0))
+        # print(f"Updated channel capacity: {self.channel_capacity}")
 
-        # 更新用户速率，假设 self.user_rate 的形状为 [NUM_SATELLITES, NUM_GROUND_USERS, TIME_STEPS]
-        self.user_rate[:, :, self.current_time_step] = self.calculate_actual_rate_matrix(self.current_time_step)
-        print(
-            f"Updated user rate for time slot {self.current_time_step}: {self.user_rate[:, :, self.current_time_step]}")
+        # 直接更新用户速率，不考虑时间维度
+        # 注意：这里假设 calculate_actual_rate_matrix 不需要时间步作为参数，或者该函数已经被修改为不使用时间维度
+        # self.user_rate = self.calculate_actual_rate_matrix()
+        # print(f"Updated user rate: {self.user_rate}")
