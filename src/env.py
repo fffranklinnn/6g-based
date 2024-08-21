@@ -24,7 +24,7 @@ class Env:
         self.EIRP_watts = 10 ** ((self.EIRP - 30) / 10)  # 将 EIRP 从 dBm 转换为瓦特
         self.noise_power = self.k * self.noise_temperature * self.total_bandwidth  # 噪声功率计算
         self.angle_threshold = 15  # 单位：度
-        self.w1 = 1  # 切换次数的权重
+        self.w1 = 0.01  # 切换次数的权重
         self.w2 = 1  # 用户传输速率的权重
         # self.r_thr = -5  # 最低的CINR阈值，单位：dB
 
@@ -168,47 +168,42 @@ class Env:
         return coverage
 
     def step(self, action: torch.Tensor) -> Tuple[torch.Tensor, float, bool, dict]:
-        # 确保 action 是张量
-        action = self.ensure_tensor(action)
-        # print(f"Action shape: {action.shape}")
+        print(f"Starting step {self.current_time_step + 1}/{self.NUM_TIME_SLOTS}")
 
-        # 确保 action 的形状正确
-        action_matrix = action.view((self.NUM_SATELLITES, self.NUM_GROUND_USER)).to(self.device)
-        # print(f"Action matrix shape: {action_matrix.shape}")
+        # 确保 action 是一个 torch.Tensor
+        if not isinstance(action, torch.Tensor):
+            action = torch.tensor(action, dtype=torch.float32)  # 根据你的需要可能需要调整数据类型
 
-        # 检查是否已经达到最大时间步数
+        # 确保 action 的形状和数据类型正确
+        try:
+            action_matrix = action.view((self.NUM_SATELLITES, self.NUM_GROUND_USER)).to(self.device)
+        except Exception as e:
+            print(f"Error reshaping or moving action to device: {e}")
+            raise
+
         if self.current_time_step >= self.NUM_TIME_SLOTS:
+            print("Reached the end of time slots, terminating...")
             return self.terminate()
 
-        # 更新接入决策变量
         self.access_decision = action_matrix
-        # 检查并更新切换次数
+        print(f"Access decision updated for time step {self.current_time_step}")
+
         if self.current_time_step > 0:
             self.update_switch_count(action_matrix)
 
-        # 计算用户传输速率和信道容量
         self.update_rates_and_capacity(action_matrix)
-
-        # 计算奖励
         reward = self.calculate_reward(action_matrix)
-        print(f"Reward: {reward}")
+        print(f"Reward at step {self.current_time_step}: {reward}")
 
-        # 更新时间步
         self.current_time_step += 1
-
-        # 检查是否结束
         is_done = self.current_time_step >= self.NUM_TIME_SLOTS
+        print(f"End of step {self.current_time_step}, Termination status: {is_done}")
 
-        # 获取观察
         observation = self.get_observation() if not is_done else torch.zeros(self._calculate_observation_shape(),
                                                                              device=self.device)
+        # print(f"Observation for next step: {observation.shape}")
 
-        # 可选的额外信息
-        information = {
-            'current_time_step': self.current_time_step,
-            'switch_count': self.switch_count.clone()
-        }
-
+        information = {'current_time_step': self.current_time_step, 'switch_count': self.switch_count.clone()}
         return observation, reward, is_done, information
 
     def initialize_coverage_indicator(self):
@@ -302,12 +297,12 @@ class Env:
 
     def calculate_reward(self, action_matrix: torch.Tensor) -> float:
         reward = 0
-        # 假设 self.user_rate 已经不再使用时间维度
+        # 假设 self.channel_capacity 已经不再使用时间维度
         for satellite_index in range(self.NUM_SATELLITES):
             for user_index in range(self.NUM_GROUND_USER):
                 if action_matrix[satellite_index, user_index] == 1:
-                    rate = self.user_rate[satellite_index, user_index]
-                    reward += self.w2 * rate  # 增加奖励，基于用户速率
+                    capacity = self.channel_capacity[satellite_index, user_index]
+                    reward += self.w2 * capacity  # 增加奖励，基于信道容量
 
         # 减少奖励，基于用户切换次数
         # 注意：这里假设 self.switch_count 已经被更新以反映最新的切换情况
@@ -321,12 +316,10 @@ class Env:
         sat_heights = self.satellite_heights  # 假设形状: [61, 301]
         eval_angles = self.eval_angle  # 假设形状: [61, 10, 301]
 
-        # print(f"Original sat_heights shape: {sat_heights.shape}")  # 打印原始sat_heights形状
-        # print(f"Original eval_angles shape: {eval_angles.shape}")  # 打印原始eval_angles形状
+
         # 通过调整形状来启用广播
         sat_heights = sat_heights.unsqueeze(1)  # 形状变为: [61, 1, 301]
         # 注意：这里不再对 eval_angles 进行形状调整，因为它已经是预期形状
-        # print(f"Adjusted sat_heights shape for broadcasting: {sat_heights.shape}")  # 打印调整后的sat_heights形状
 
         # 计算距离矩阵
         distance = self.radius_earth * (self.radius_earth + sat_heights) / torch.sqrt(
@@ -428,7 +421,7 @@ class Env:
             # 更新切换次数
             if self.current_time_step > 1:  # 假设第一个时隙的切换不计入
                 self.switch_count += switch_matrix.sum(dim=0)
-            print(f"Updated switch count: {self.switch_count}")
+            # print(f"Updated switch count: {self.switch_count}")
 
         # 在每次调用结束时，将当前的接入决策保存为下一次的前一个接入决策
         self.previous_access_strategy_space = action_matrix.clone()
@@ -441,18 +434,12 @@ class Env:
 
         # 计算 INR 矩阵，假设其形状为 [NUM_SATELLITES, NUM_GROUND_USERS]
         INR = self.calculate_interference_matrix(self.current_time_step, action_matrix)
-        # print(f"INR matrix shape: {INR.shape}, values: {INR}")
-        # print(f"[update_rates_and_capacity] Distance matrix shape: {distance_matrix.shape}")
-        # print(f"[update_rates_and_capacity] CNR matrix shape: {CNR.shape}")
-        # print(f"[update_rates_and_capacity] INR matrix shape: {INR.shape}")
         # 确保 CNR 和 INR 的形状一致
         assert CNR.shape == INR.shape, f"CNR shape {CNR.shape} does not match INR shape {INR.shape}"
 
         # 直接更新信道容量，不考虑时间维度
         self.channel_capacity = self.total_bandwidth * torch.log2(1.0 + CNR / (INR + 1.0))
-        # print(f"Updated channel capacity: {self.channel_capacity}")
-
-        # 直接更新用户速率，不考虑时间维度
-        # 注意：这里假设 calculate_actual_rate_matrix 不需要时间步作为参数，或者该函数已经被修改为不使用时间维度
-        # self.user_rate = self.calculate_actual_rate_matrix()
-        # print(f"Updated user rate: {self.user_rate}")
+        # 确保 channel_capacity 形状正确
+        if self.channel_capacity.shape != (self.NUM_SATELLITES, self.NUM_GROUND_USER):
+            self.channel_capacity = self.channel_capacity.transpose(0, 1)
+        # print(f"Channel capacity shape: {self.channel_capacity.shape}")

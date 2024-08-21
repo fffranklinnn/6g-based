@@ -31,14 +31,18 @@ def main():
         for t in range(max_timesteps):
             action = sac.select_action(state)
             action = torch.clamp(action, 0, 1)
-            action = action.cpu().numpy().reshape((env.NUM_SATELLITES, env.NUM_GROUND_USER))
+            action_numpy = action.cpu().numpy().reshape((env.NUM_SATELLITES, env.NUM_GROUND_USER))
 
-            next_state, reward, done, _ = env.step(action)
+            try:
+                next_state, reward, done, _ = env.step(action_numpy)  # 确保传递的是正确的numpy数组
+            except Exception as e:
+                print(f"Error during environment step: {e}")
+                break
+
             next_state = flatten_state(next_state).to(device)
-
             not_done = 1.0 - float(done)
 
-            sac.replay_buffer.add(state.cpu().numpy(), action, next_state.cpu().numpy(), reward, not_done)
+            sac.replay_buffer.add(state.cpu().numpy(), action_numpy, next_state.cpu().numpy(), reward, not_done)
             state = next_state
             episode_reward += reward
 
@@ -59,6 +63,6 @@ def main():
 
     env.close()
 
+
 if __name__ == "__main__":
     main()
-
