@@ -24,9 +24,8 @@ class Env:
         self.EIRP_watts = 10 ** ((self.EIRP - 30) / 10)  # 将 EIRP 从 dBm 转换为瓦特
         self.noise_power = self.k * self.noise_temperature * self.total_bandwidth  # 噪声功率计算
         self.angle_threshold = 15  # 单位：度
-        self.w1 = 0.01  # 切换次数的权重
+        self.w1 = 0  # 切换次数的权重
         self.w2 = 1  # 用户传输速率的权重
-        # self.r_thr = -5  # 最低的CINR阈值，单位：dB
 
         # 定义动作空间和观察空间
         self.action_space = torch.zeros(self.NUM_SATELLITES * self.NUM_GROUND_USER, dtype=torch.int)
@@ -275,14 +274,6 @@ class Env:
         switch_count_numel = self.switch_count.numel()
         eval_angle_numel = self.eval_angle[0].numel()
         satellite_heights_numel = self.satellite_heights[0].numel()
-
-        # 打印每个组成部分的尺寸
-        # print(f"Coverage indicator numel: {coverage_indicator_numel}")
-        # print(f"Access decision numel: {access_decision_numel}")
-        # print(f"Switch count numel: {switch_count_numel}")
-        # print(f"Elevation angles numel: {eval_angle_numel}")
-        # print(f"Satellite heights numel: {satellite_heights_numel}")
-
         # 计算总的观测空间尺寸
         total_numel = (coverage_indicator_numel +
                        access_decision_numel +
@@ -302,6 +293,7 @@ class Env:
             for user_index in range(self.NUM_GROUND_USER):
                 if action_matrix[satellite_index, user_index] == 1:
                     capacity = self.channel_capacity[satellite_index, user_index]
+                    # print(f"the fucking capacity is {capacity}")
                     reward += self.w2 * capacity  # 增加奖励，基于信道容量
 
         # 减少奖励，基于用户切换次数
@@ -315,7 +307,6 @@ class Env:
         # 获取所有时间段的卫星高度和仰角
         sat_heights = self.satellite_heights  # 假设形状: [61, 301]
         eval_angles = self.eval_angle  # 假设形状: [61, 10, 301]
-
 
         # 通过调整形状来启用广播
         sat_heights = sat_heights.unsqueeze(1)  # 形状变为: [61, 1, 301]
@@ -345,14 +336,16 @@ class Env:
 
         # 计算接收功率（单位：瓦特），假设 self.EIRP_watts 和 self.receive_benefit_ground 是标量
         received_power_watts = self.EIRP_watts * 10 ** (self.receive_benefit_ground / 10) / (10 ** (loss / 10))
+        # print(f"received power watts:",{received_power_watts})
 
         # 计算 CNR（线性值），假设 self.noise_power 是标量
         CNR_linear = received_power_watts / self.noise_power
-
+        # print(f"CNR Linear:",{CNR_linear})
         # 返回 CNR 的对数值（单位：dB），保持矩阵形状
-        CNR = 10 * torch.log10(CNR_linear)
+        # CNR = 10 * torch.log10(CNR_linear)
+        # print(f"CNR:",{CNR})
         # print(f"[calculate_CNR_matrix] CNR matrix shape: {CNR.shape}")  # [10,301,301]
-        return CNR
+        return CNR_linear
 
     def calculate_interference_matrix(self, time_slot: int, action_matrix: torch.Tensor) -> torch.Tensor:
         interference_matrix = torch.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER), dtype=torch.float32, device=self.device)
@@ -442,4 +435,5 @@ class Env:
         # 确保 channel_capacity 形状正确
         if self.channel_capacity.shape != (self.NUM_SATELLITES, self.NUM_GROUND_USER):
             self.channel_capacity = self.channel_capacity.transpose(0, 1)
+        print(f"channel_capacity: {self.channel_capacity}")
         # print(f"Channel capacity shape: {self.channel_capacity.shape}")

@@ -83,7 +83,7 @@ class SAC:
 
     def select_action(self, state):
         with torch.no_grad():
-            return self.actor(state).cpu()
+            return self.actor(state)
 
     def update_parameters(self, batch_size):
         if len(self.replay_buffer) < batch_size:
@@ -135,31 +135,31 @@ class SAC:
         self.target_critic1.load_state_dict(torch.load(filename + "_target_critic1"))
         self.target_critic2.load_state_dict(torch.load(filename + "_target_critic2"))
 # 示例使用
-if __name__ == "__main__":
-    state_dim = 9341  # 输入维度
-    action_dim = 10   # 输出维度（假设为10）
-    max_action = 1.0  # 假设动作的最大值为1.0
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    sac = SAC(state_dim, action_dim, max_action, device)
-
-    # 生成一个随机的状态张量
-    state = torch.randn(1, state_dim).to(device)
-
-    # 打印状态的形状
-    print(f"State shape: {state.shape}")
-
-    # 选择动作
-    action = sac.select_action(state)
-    print(f"Selected action: {action}")
-
-    # 添加到Replay Buffer并进行训练
-    next_state = torch.randn(1, state_dim).to(device)
-    reward = np.random.rand()
-    not_done = 1.0
-
-    sac.replay_buffer.add(state.cpu().numpy(), action.cpu().numpy(), next_state.cpu().numpy(), reward, not_done)
+# if __name__ == "__main__":
+#     state_dim = 9341  # 输入维度
+#     action_dim = 10   # 输出维度（假设为10）
+#     max_action = 1.0  # 假设动作的最大值为1.0
+#
+#     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+#
+#     sac = SAC(state_dim, action_dim, max_action, device)
+#
+#     # 生成一个随机的状态张量
+#     state = torch.randn(1, state_dim).to(device)
+#
+#     # 打印状态的形状
+#     print(f"State shape: {state.shape}")
+#
+#     # 选择动作
+#     action = sac.select_action(state)
+#     print(f"Selected action: {action}")
+#
+#     # 添加到Replay Buffer并进行训练
+#     next_state = torch.randn(1, state_dim).to(device)
+#     reward = np.random.rand()
+#     not_done = 1.0
+#
+#     sac.replay_buffer.add(state.cpu().numpy(), action.cpu().numpy(), next_state.cpu().numpy(), reward, not_done)
 
     # 训练SAC
-    sac.train(batch_size=256)
+    # sac.train(batch_size=256)
