@@ -232,6 +232,8 @@ class Env:
 
         # 初始化覆盖指示变量
         # self.initialize_coverage_indicator()
+        # 假设 self.access_decision 在此之前已经根据某种逻辑被赋值
+        self.previous_access_strategy_space = self.access_decision.clone()
 
         # 重置切换次数
         self.switch_count = torch.zeros(self.NUM_GROUND_USER, dtype=torch.int, device=self.device)
@@ -365,8 +367,9 @@ class Env:
             for satellite_index in range(self.NUM_SATELLITES):
                 if action_matrix[satellite_index, user_index] == 1:
                     interference_matrix[satellite_index, user_index] = self.calculate_interference(time_slot, user_index, satellite_index)
-        # print(f"Interference matrix shape: {interference_matrix.shape}")
-        return interference_matrix.transpose(0, 1)
+        interference_matrix = interference_matrix.transpose(0, 1)
+        print(f"Interference matrix shape: {interference_matrix.shape}")
+        return interference_matrix
 
     def calculate_interference(self, time_slot: int, user_index: int, accessed_satellite_index: int) -> float:
         total_interference_power_watts = 0
@@ -387,23 +390,6 @@ class Env:
         total_interference_dBm = 10 * torch.log10(torch.tensor(total_interference_power_watts).clone().detach()) + 30
         # print(f"Calculated interference: {total_interference_dBm.item()} dBm")
         return total_interference_dBm.item()
-
-    # 覆盖变量不需要修改
-    # def update_coverage_indicator(self, current_time_slot: int):
-    #     for user_index in range(self.NUM_GROUND_USER):
-    #         for satellite_index in range(self.NUM_SATELLITES):
-    #             if self.eval_angle[current_time_slot, user_index, satellite_index] > self.angle_threshold:
-    #                 self.coverage_indicator[current_time_slot, user_index, satellite_index] = 1
-    #             else:
-    #                 self.coverage_indicator[current_time_slot, user_index, satellite_index] = 0
-    #     print(f"Updated coverage indicator for time slot {current_time_slot}")
-
-    def calculate_actual_rate_matrix(self, time_slot: int) -> torch.Tensor:
-        capacity = self.channel_capacity[:, :, time_slot]
-        demand = self.user_demand_rate[:, time_slot]
-        actual_rate = torch.min(capacity, demand)
-        # print(f"Actual rate matrix shape: {actual_rate.shape}")
-        return actual_rate
 
     def render(self):
         print(f"Current time step: {self.current_time_step}")
@@ -431,8 +417,11 @@ class Env:
         if self.current_time_step > 0:
             # 计算当前决策和前一个决策不同的位置
             switch_matrix = (action_matrix != self.previous_access_strategy_space).int()
+            # 增加日志记录
+            print(f"Switch matrix:\n{switch_matrix}")
             # 更新切换次数
-            self.switch_count += switch_matrix.sum(dim=0)
+            if self.current_time_step > 1:  # 假设第一个时隙的切换不计入
+                self.switch_count += switch_matrix.sum(dim=0)
             print(f"Updated switch count: {self.switch_count}")
 
         # 在每次调用结束时，将当前的接入决策保存为下一次的前一个接入决策
