@@ -332,7 +332,7 @@ class Env:
         distance = self.radius_earth * (self.radius_earth + sat_heights) / torch.sqrt(
             (self.radius_earth + sat_heights) ** 2 - self.radius_earth ** 2 * torch.cos(torch.deg2rad(eval_angles)) ** 2
         )
-        # print(f"Distance matrix shape: {distance.shape}")  # 打印距离矩阵形状
+        print(f"[calculate_distance_matrix] Distance matrix shape: {distance.shape}")
         # 断言验证最终形状
         assert distance.shape == (61, 10, 301), f"Unexpected shape: {distance.shape}"
 
@@ -342,7 +342,7 @@ class Env:
         # 计算路径损耗矩阵
         pathloss = 20 * torch.log10(distance_matrix) + 20 * torch.log10(self.communication_frequency) - 147.55
 
-        print(f"Pathloss matrix shape: {pathloss.shape}")
+        # print(f"Pathloss matrix shape: {pathloss.shape}")
         return pathloss  # Shape: [NUM_TIME_SLOTS, NUM_SATELLITES, NUM_GROUND_USER]
 
     #CNR的计算需要根据决策变量来决定，所以应该只记录当前slot下的CNR情况
@@ -358,7 +358,7 @@ class Env:
 
         # 返回 CNR 的对数值（单位：dB），保持矩阵形状
         CNR = 10 * torch.log10(CNR_linear)
-        print(f"CNR matrix shape: {CNR.shape}")  # [10,301,301]
+        print(f"[calculate_CNR_matrix] CNR matrix shape: {CNR.shape}")  # [10,301,301]
         return CNR
 
     def calculate_interference_matrix(self, time_slot: int, action_matrix: torch.Tensor) -> torch.Tensor:
@@ -368,18 +368,21 @@ class Env:
                 if action_matrix[satellite_index, user_index] == 1:
                     interference_matrix[satellite_index, user_index] = self.calculate_interference(time_slot, user_index, satellite_index)
         interference_matrix = interference_matrix.transpose(0, 1)
-        print(f"Interference matrix shape: {interference_matrix.shape}")
+        print(f"[calculate_interference_matrix] Interference matrix shape: {interference_matrix.shape}")
         return interference_matrix
 
     def calculate_interference(self, time_slot: int, user_index: int, accessed_satellite_index: int) -> float:
+        # 计算一次路径损耗矩阵
+        loss = self.calculate_DL_pathloss_matrix(torch.tensor(time_slot))
         total_interference_power_watts = 0
+
         for satellite_index in range(self.NUM_SATELLITES):
-            # print(f"Coverage Indicator: {self.coverage_indicator[time_slot, user_index, satellite_index]}")
-            if satellite_index != accessed_satellite_index and (self.coverage_indicator[time_slot, user_index, satellite_index, 0] == 1 or self.coverage_indicator[time_slot, user_index, satellite_index, 1] == 1):
-                loss = self.calculate_DL_pathloss_matrix(torch.tensor(time_slot))
+            if satellite_index != accessed_satellite_index and (
+                    self.coverage_indicator[time_slot, user_index, satellite_index, 0] == 1 or self.coverage_indicator[
+                time_slot, user_index, satellite_index, 1] == 1):
                 if satellite_index >= loss.shape[0] or user_index >= loss.shape[1]:
                     print(
-                        f"Index out of bounds: satellite_index={satellite_index}, user_index={user_index}, loss.shape={loss.shape}")
+                        f"[calculate_interference] Processing satellite_index={accessed_satellite_index}, user_index={user_index}")
                     continue
                 loss_value = loss[satellite_index, user_index]
                 EIRP_watts = 10 ** ((self.EIRP - 30) / 10)
@@ -388,7 +391,6 @@ class Env:
                 total_interference_power_watts += interference_power_watts
 
         total_interference_dBm = 10 * torch.log10(torch.tensor(total_interference_power_watts).clone().detach()) + 30
-        # print(f"Calculated interference: {total_interference_dBm.item()} dBm")
         return total_interference_dBm.item()
 
     def render(self):
@@ -436,7 +438,9 @@ class Env:
         # 计算 INR 矩阵，假设其形状为 [NUM_SATELLITES, NUM_GROUND_USERS]
         INR = self.calculate_interference_matrix(self.current_time_step, action_matrix)
         # print(f"INR matrix shape: {INR.shape}, values: {INR}")
-
+        print(f"[update_rates_and_capacity] Distance matrix shape: {distance_matrix.shape}")
+        print(f"[update_rates_and_capacity] CNR matrix shape: {CNR.shape}")
+        print(f"[update_rates_and_capacity] INR matrix shape: {INR.shape}")
         # 确保 CNR 和 INR 的形状一致
         assert CNR.shape == INR.shape, f"CNR shape {CNR.shape} does not match INR shape {INR.shape}"
 

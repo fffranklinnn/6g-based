@@ -10,15 +10,13 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    # 获取正确的状态维度
     raw_state_dim = env._calculate_observation_shape()[0]
     flattened_state_dim = flatten_state(torch.zeros(raw_state_dim)).numel()
-    # print(f"Flattened state dimension: {flattened_state_dim}")
 
-    action_dim = env.action_space.numel()  # 确保获取正确的动作维度
-    max_action = 1  # 对于 MultiBinary 动作空间，最大值为1
+    action_dim = env.action_space.numel()
+    max_action = 1  # 确认这是否适合你的环境
 
-    sac = SAC(flattened_state_dim, action_dim, max_action, device)  # 传递正确的状态维度和 device 参数
+    sac = SAC(flattened_state_dim, action_dim, max_action, device)
 
     num_episodes = 100
     max_timesteps = 60
@@ -26,25 +24,21 @@ def main():
 
     for episode in range(num_episodes):
         state, _ = env.reset()
-        state = flatten_state(state).to(device)  # 确保状态在正确的设备上并平整化
+        state = flatten_state(state).to(device)
 
         episode_reward = 0
 
         for t in range(max_timesteps):
             action = sac.select_action(state)
-            action = torch.clamp(action, 0, 1)  # 确保动作在有效范围内
+            action = torch.clamp(action, 0, 1)
+            action = action.cpu().numpy().reshape((env.NUM_SATELLITES, env.NUM_GROUND_USER))
 
-            # 确保action是一个numpy数组并且形状正确
-            action = action.cpu().numpy()
-            action = action.reshape((env.NUM_SATELLITES, env.NUM_GROUND_USER))
-            # print(f"Action shape after reshape: {action.shape}")
+            next_state, reward, done, _ = env.step(action)
+            next_state = flatten_state(next_state).to(device)
 
-            next_state, reward, done, _ = env.step(action)  # 保持动作为numpy类型
-            next_state = flatten_state(next_state).to(device)  # 平整并移至正确的设备
+            not_done = 1.0 - float(done)
 
-            not_done = 1.0 if not done else 0.0
-
-            sac.replay_buffer.add(state.cpu().numpy(), action, next_state.cpu().numpy(), reward, not_done)  # 处理设备转移问题
+            sac.replay_buffer.add(state.cpu().numpy(), action, next_state.cpu().numpy(), reward, not_done)
             state = next_state
             episode_reward += reward
 
@@ -57,7 +51,6 @@ def main():
         print(f"Episode {episode + 1}, Reward: {episode_reward}")
 
         if (episode + 1) % 10 == 0:
-            print(f"Episode {episode + 1} completed. Saving model checkpoint.")
             sac.save(f"sac_checkpoint_{episode + 1}")
 
         if (episode + 1) % 100 == 0:
@@ -66,6 +59,6 @@ def main():
 
     env.close()
 
-
 if __name__ == "__main__":
     main()
+
