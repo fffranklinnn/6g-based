@@ -313,7 +313,7 @@ class Env:
         # 注意：这里假设 self.switch_count 已经被更新以反映最新的切换情况
         reward -= self.w1 * sum(self.switch_count)
 
-        print(f"Calculated reward: {reward}")
+        # print(f"Calculated reward: {reward}")
         return reward
 
     def calculate_distance_matrix(self) -> torch.Tensor:
@@ -332,7 +332,7 @@ class Env:
         distance = self.radius_earth * (self.radius_earth + sat_heights) / torch.sqrt(
             (self.radius_earth + sat_heights) ** 2 - self.radius_earth ** 2 * torch.cos(torch.deg2rad(eval_angles)) ** 2
         )
-        print(f"[calculate_distance_matrix] Distance matrix shape: {distance.shape}")
+        # print(f"[calculate_distance_matrix] Distance matrix shape: {distance.shape}")
         # 断言验证最终形状
         assert distance.shape == (61, 10, 301), f"Unexpected shape: {distance.shape}"
 
@@ -358,7 +358,7 @@ class Env:
 
         # 返回 CNR 的对数值（单位：dB），保持矩阵形状
         CNR = 10 * torch.log10(CNR_linear)
-        print(f"[calculate_CNR_matrix] CNR matrix shape: {CNR.shape}")  # [10,301,301]
+        # print(f"[calculate_CNR_matrix] CNR matrix shape: {CNR.shape}")  # [10,301,301]
         return CNR
 
     def calculate_interference_matrix(self, time_slot: int, action_matrix: torch.Tensor) -> torch.Tensor:
@@ -368,21 +368,25 @@ class Env:
                 if action_matrix[satellite_index, user_index] == 1:
                     interference_matrix[satellite_index, user_index] = self.calculate_interference(time_slot, user_index, satellite_index)
         interference_matrix = interference_matrix.transpose(0, 1)
-        print(f"[calculate_interference_matrix] Interference matrix shape: {interference_matrix.shape}")
+        # print(f"[calculate_interference_matrix] Interference matrix shape: {interference_matrix.shape}")
         return interference_matrix
 
     def calculate_interference(self, time_slot: int, user_index: int, accessed_satellite_index: int) -> float:
-        # 计算一次路径损耗矩阵
-        loss = self.calculate_DL_pathloss_matrix(torch.tensor(time_slot))
+        # 先计算整个时间序列的距离矩阵
+        distance_matrix = self.calculate_distance_matrix()
+        # 只取当前时间槽的距离矩阵
+        current_distance_matrix = distance_matrix[time_slot]
+
+        # 计算路径损耗矩阵，传递正确的距离矩阵
+        loss = self.calculate_DL_pathloss_matrix(current_distance_matrix)
         total_interference_power_watts = 0
 
         for satellite_index in range(self.NUM_SATELLITES):
             if satellite_index != accessed_satellite_index and (
-                    self.coverage_indicator[time_slot, user_index, satellite_index, 0] == 1 or self.coverage_indicator[
-                time_slot, user_index, satellite_index, 1] == 1):
+                    self.coverage_indicator[time_slot, user_index, satellite_index, 0] == 1 or
+                    self.coverage_indicator[time_slot, user_index, satellite_index, 1] == 1):
                 if satellite_index >= loss.shape[0] or user_index >= loss.shape[1]:
-                    print(
-                        f"[calculate_interference] Processing satellite_index={accessed_satellite_index}, user_index={user_index}")
+                    # print(f"[calculate_interference] Processing satellite_index={accessed_satellite_index}, user_index={user_index}")
                     continue
                 loss_value = loss[satellite_index, user_index]
                 EIRP_watts = 10 ** ((self.EIRP - 30) / 10)
@@ -420,7 +424,7 @@ class Env:
             # 计算当前决策和前一个决策不同的位置
             switch_matrix = (action_matrix != self.previous_access_strategy_space).int()
             # 增加日志记录
-            print(f"Switch matrix:\n{switch_matrix}")
+            # print(f"Switch matrix:\n{switch_matrix}")
             # 更新切换次数
             if self.current_time_step > 1:  # 假设第一个时隙的切换不计入
                 self.switch_count += switch_matrix.sum(dim=0)
@@ -438,9 +442,9 @@ class Env:
         # 计算 INR 矩阵，假设其形状为 [NUM_SATELLITES, NUM_GROUND_USERS]
         INR = self.calculate_interference_matrix(self.current_time_step, action_matrix)
         # print(f"INR matrix shape: {INR.shape}, values: {INR}")
-        print(f"[update_rates_and_capacity] Distance matrix shape: {distance_matrix.shape}")
-        print(f"[update_rates_and_capacity] CNR matrix shape: {CNR.shape}")
-        print(f"[update_rates_and_capacity] INR matrix shape: {INR.shape}")
+        # print(f"[update_rates_and_capacity] Distance matrix shape: {distance_matrix.shape}")
+        # print(f"[update_rates_and_capacity] CNR matrix shape: {CNR.shape}")
+        # print(f"[update_rates_and_capacity] INR matrix shape: {INR.shape}")
         # 确保 CNR 和 INR 的形状一致
         assert CNR.shape == INR.shape, f"CNR shape {CNR.shape} does not match INR shape {INR.shape}"
 
