@@ -179,7 +179,7 @@ class Env:
         return coverage
 
     def step(self, action: torch.Tensor) -> Tuple[torch.Tensor, float, bool, dict]:
-        print(f"Starting step {self.current_time_step + 1}/{self.NUM_TIME_SLOTS}")
+        print(f"Starting step {self.current_time_step}/{self.NUM_TIME_SLOTS}")
 
         # 确保 action 是一个 torch.Tensor
         if not isinstance(action, torch.Tensor):
@@ -192,11 +192,6 @@ class Env:
             print(f"Error reshaping or moving action to device: {e}")
             raise
 
-        # 打印 action_matrix 的统计信息
-        # num_actions = torch.sum(action_matrix).item()
-        # print(f"Number of 1's in action_matrix: {num_actions}")
-        # if num_actions == 0:
-        #     print("Warning: No actions taken at this step!")
         if self.current_time_step >= self.NUM_TIME_SLOTS:
             print("Reached the end of time slots, terminating...")
             return self.terminate()
@@ -314,7 +309,7 @@ class Env:
             for user_index in range(self.NUM_GROUND_USER):
                 if action_matrix[satellite_index, user_index] == 1:
                     capacity = self.channel_capacity[satellite_index, user_index]
-                    # print(f"the fucking capacity is {capacity}")
+                    # print(f"the capacity is {capacity}"+f"the Sindex is {satellite_index}"+f"the user is {user_index}")
                     reward += self.w2 * capacity  # 增加奖励，基于信道容量
 
         # 减少奖励，基于用户切换次数
@@ -460,5 +455,3 @@ class Env:
         # 确保 channel_capacity 形状正确
         if self.channel_capacity.shape != (self.NUM_SATELLITES, self.NUM_GROUND_USER):
             self.channel_capacity = self.channel_capacity.transpose(0, 1)
-        # print(f"channel_capacity: {self.channel_capacity}")
-        # print(f"Channel capacity shape: {self.channel_capacity.shape}")

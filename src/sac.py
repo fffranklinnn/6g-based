@@ -45,16 +45,25 @@ class ReplayBuffer:
         self.device = device
 
     def add(self, state, action, next_state, reward, not_done):
+        # 直接将输入转换为Tensor并存储，确保所有数据都在正确的设备上
+        state = torch.as_tensor(state, device=self.device)
+        action = torch.as_tensor(action, device=self.device)
+        next_state = torch.as_tensor(next_state, device=self.device)
+        reward = torch.as_tensor(reward, device=self.device, dtype=torch.float32)
+        not_done = torch.as_tensor(not_done, device=self.device, dtype=torch.float32)
         self.buffer.append((state, action, next_state, reward, not_done))
 
     def sample(self, batch_size):
         batch = random.sample(self.buffer, batch_size)
         state, action, next_state, reward, not_done = zip(*batch)
-        state = torch.FloatTensor(np.array(state)).to(self.device)
-        action = torch.FloatTensor(np.array(action)).to(self.device)
-        next_state = torch.FloatTensor(np.array(next_state)).to(self.device)
-        reward = torch.FloatTensor(np.array(reward)).unsqueeze(1).to(self.device)
-        not_done = torch.FloatTensor(np.array(not_done)).unsqueeze(1).to(self.device)
+
+        # 使用torch.stack来合并列表中的Tensor
+        state = torch.stack(state, dim=0).to(self.device)
+        action = torch.stack(action, dim=0).to(self.device)
+        next_state = torch.stack(next_state, dim=0).to(self.device)
+        reward = torch.stack(reward, dim=0).to(self.device)
+        not_done = torch.stack(not_done, dim=0).to(self.device)
+
         return state, action, next_state, reward, not_done
 
     def __len__(self):
