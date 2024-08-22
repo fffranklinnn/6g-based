@@ -18,7 +18,9 @@ class Actor(nn.Module):
     def forward(self, state):
         a = torch.relu(self.l1(state))
         a = torch.relu(self.l2(a))
+        # a = torch.sigmoid(self.l3(a))
         return self.max_action * torch.tanh(self.l3(a))
+
 
 # 定义Critic网络
 class Critic(nn.Module):
@@ -32,6 +34,7 @@ class Critic(nn.Module):
         q = torch.relu(self.l1(torch.cat([state, action], dim=1)))
         q = torch.relu(self.l2(q))
         return self.l3(q)
+
 
 # 定义Replay Buffer
 class ReplayBuffer:
@@ -57,6 +60,7 @@ class ReplayBuffer:
     def __len__(self):
         return len(self.buffer)
 
+
 # 定义SAC算法
 class SAC:
     def __init__(self, state_dim, action_dim, max_action, device):
@@ -75,7 +79,8 @@ class SAC:
         self.target_critic1.load_state_dict(self.critic1.state_dict())
         self.target_critic2.load_state_dict(self.critic2.state_dict())
 
-        self.replay_buffer = ReplayBuffer(max_size=100000, state_dim=state_dim, action_dim=action_dim, device=self.device)
+        self.replay_buffer = ReplayBuffer(max_size=100000, state_dim=state_dim, action_dim=action_dim,
+                                          device=self.device)
         self.max_action = max_action
         self.discount = 0.99
         self.tau = 0.005
@@ -134,32 +139,4 @@ class SAC:
         self.critic2.load_state_dict(torch.load(filename + "_critic2"))
         self.target_critic1.load_state_dict(torch.load(filename + "_target_critic1"))
         self.target_critic2.load_state_dict(torch.load(filename + "_target_critic2"))
-# 示例使用
-# if __name__ == "__main__":
-#     state_dim = 9341  # 输入维度
-#     action_dim = 10   # 输出维度（假设为10）
-#     max_action = 1.0  # 假设动作的最大值为1.0
-#
-#     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-#
-#     sac = SAC(state_dim, action_dim, max_action, device)
-#
-#     # 生成一个随机的状态张量
-#     state = torch.randn(1, state_dim).to(device)
-#
-#     # 打印状态的形状
-#     print(f"State shape: {state.shape}")
-#
-#     # 选择动作
-#     action = sac.select_action(state)
-#     print(f"Selected action: {action}")
-#
-#     # 添加到Replay Buffer并进行训练
-#     next_state = torch.randn(1, state_dim).to(device)
-#     reward = np.random.rand()
-#     not_done = 1.0
-#
-#     sac.replay_buffer.add(state.cpu().numpy(), action.cpu().numpy(), next_state.cpu().numpy(), reward, not_done)
 
-    # 训练SAC
-    # sac.train(batch_size=256)

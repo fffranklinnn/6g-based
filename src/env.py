@@ -2,6 +2,17 @@ import pandas as pd
 import torch
 import os
 from typing import Optional, Tuple
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+
+def visualize_action_matrix(action_matrix):
+    plt.figure(figsize=(12, 5))  # 设置图像大小
+    sns.heatmap(action_matrix, cmap="YlGnBu", cbar=True, annot=False)
+    plt.title("Action Matrix Heatmap")
+    plt.xlabel("Ground User")
+    plt.ylabel("Satellite")
+    plt.show()
 
 
 class Env:
@@ -29,7 +40,8 @@ class Env:
 
         # 定义动作空间和观察空间
         self.action_space = torch.zeros(self.NUM_SATELLITES * self.NUM_GROUND_USER, dtype=torch.int)
-        self.coverage_space = torch.zeros((self.NUM_TIME_SLOTS, self.NUM_SATELLITES, self.NUM_GROUND_USER, 2), dtype=torch.int)
+        self.coverage_space = torch.zeros((self.NUM_TIME_SLOTS, self.NUM_SATELLITES, self.NUM_GROUND_USER, 2),
+                                          dtype=torch.int)
         self.previous_access_strategy_space = torch.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER), dtype=torch.int)
         self.switch_count_space = torch.zeros(self.NUM_GROUND_USER, dtype=torch.int)
         self.elevation_angle_space = torch.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER), dtype=torch.float32)
@@ -180,12 +192,18 @@ class Env:
             print(f"Error reshaping or moving action to device: {e}")
             raise
 
+        # 打印 action_matrix 的统计信息
+        # num_actions = torch.sum(action_matrix).item()
+        # print(f"Number of 1's in action_matrix: {num_actions}")
+        # if num_actions == 0:
+        #     print("Warning: No actions taken at this step!")
         if self.current_time_step >= self.NUM_TIME_SLOTS:
             print("Reached the end of time slots, terminating...")
             return self.terminate()
 
         self.access_decision = action_matrix
-        print(f"Access decision updated for time step {self.current_time_step}")
+        print(self.access_decision)
+        # print(f"Access decision updated for time step {self.current_time_step}")
 
         if self.current_time_step > 0:
             self.update_switch_count(action_matrix)
@@ -196,13 +214,15 @@ class Env:
 
         self.current_time_step += 1
         is_done = self.current_time_step >= self.NUM_TIME_SLOTS
-        print(f"End of step {self.current_time_step}, Termination status: {is_done}")
+        # print(f"End of step {self.current_time_step}, Termination status: {is_done}")
 
         observation = self.get_observation() if not is_done else torch.zeros(self._calculate_observation_shape(),
                                                                              device=self.device)
         # print(f"Observation for next step: {observation.shape}")
 
         information = {'current_time_step': self.current_time_step, 'switch_count': self.switch_count.clone()}
+        # 在这里调用可视化函数
+        # visualize_action_matrix(action_matrix.cpu().numpy())  # 确保数据在 CPU 上，并转换为 NumPy 数组
         return observation, reward, is_done, information
 
     def initialize_coverage_indicator(self):
@@ -259,7 +279,8 @@ class Env:
         previous_access_strategy = self.access_decision.flatten().float().to(self.device)
         switch_count = self.switch_count.float().to(self.device)
         elevation_angles = self.eval_angle[self.current_time_step].flatten().float().to(self.device)
-        altitudes = self.satellite_heights[self.current_time_step].flatten().float().to(self.device)  # 确保这里的处理逻辑是正确的，根据你的数据结构可能需要调整
+        altitudes = self.satellite_heights[self.current_time_step].flatten().float().to(
+            self.device)  # 确保这里的处理逻辑是正确的，根据你的数据结构可能需要调整
 
         observation = torch.cat([coverage, previous_access_strategy, switch_count, elevation_angles, altitudes])
         # print(f"Observation concatenated shape: {observation.shape}")
@@ -318,7 +339,7 @@ class Env:
         )
         # print(f"[calculate_distance_matrix] Distance matrix shape: {distance.shape}")
         # 断言验证最终形状
-        assert distance.shape == (61, 10, 301), f"Unexpected shape: {distance.shape}"
+        # assert distance.shape == (61, 10, 301), f"Unexpected shape: {distance.shape}"
 
         return distance
 
@@ -330,7 +351,8 @@ class Env:
         return pathloss  # Shape: [NUM_TIME_SLOTS, NUM_SATELLITES, NUM_GROUND_USER]
 
     #CNR的计算需要根据决策变量来决定，所以应该只记录当前slot下的CNR情况
-    def calculate_CNR_matrix(self, time_slot: int, action_matrix: torch.Tensor, distance_matrix: torch.Tensor) -> torch.Tensor:
+    def calculate_CNR_matrix(self, time_slot: int, action_matrix: torch.Tensor,
+                             distance_matrix: torch.Tensor) -> torch.Tensor:
         # 计算路径损耗矩阵，其形状为 [NUM_TIME_SLOTS, NUM_SATELLITES, NUM_GROUND_USER]
         loss = self.calculate_DL_pathloss_matrix(distance_matrix)
 
@@ -348,11 +370,14 @@ class Env:
         return CNR_linear
 
     def calculate_interference_matrix(self, time_slot: int, action_matrix: torch.Tensor) -> torch.Tensor:
-        interference_matrix = torch.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER), dtype=torch.float32, device=self.device)
+        interference_matrix = torch.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER), dtype=torch.float32,
+                                          device=self.device)
         for user_index in range(self.NUM_GROUND_USER):
             for satellite_index in range(self.NUM_SATELLITES):
                 if action_matrix[satellite_index, user_index] == 1:
-                    interference_matrix[satellite_index, user_index] = self.calculate_interference(time_slot, user_index, satellite_index)
+                    interference_matrix[satellite_index, user_index] = self.calculate_interference(time_slot,
+                                                                                                   user_index,
+                                                                                                   satellite_index)
         interference_matrix = interference_matrix.transpose(0, 1)
         # print(f"[calculate_interference_matrix] Interference matrix shape: {interference_matrix.shape}")
         return interference_matrix
@@ -377,7 +402,7 @@ class Env:
                 loss_value = loss[satellite_index, user_index]
                 EIRP_watts = 10 ** ((self.EIRP - 30) / 10)
                 interference_power_watts = EIRP_watts * (10 ** (self.receive_benefit_ground / 10)) / (
-                            10 ** (loss_value / 10))
+                        10 ** (loss_value / 10))
                 total_interference_power_watts += interference_power_watts
 
         total_interference_dBm = 10 * torch.log10(torch.tensor(total_interference_power_watts).clone().detach()) + 30
@@ -435,5 +460,5 @@ class Env:
         # 确保 channel_capacity 形状正确
         if self.channel_capacity.shape != (self.NUM_SATELLITES, self.NUM_GROUND_USER):
             self.channel_capacity = self.channel_capacity.transpose(0, 1)
-        print(f"channel_capacity: {self.channel_capacity}")
+        # print(f"channel_capacity: {self.channel_capacity}")
         # print(f"Channel capacity shape: {self.channel_capacity.shape}")
