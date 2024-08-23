@@ -18,9 +18,17 @@ def main():
 
     sac = SAC(flattened_state_dim, action_dim, max_action, device)
 
+    # 尝试加载之前保存的模型
+    try:
+        sac.load("sac_checkpoint")
+        print("模型加载成功")
+    except FileNotFoundError:
+        print("没有找到保存的模型，开始新的训练")
+
     num_episodes = 100
     max_timesteps = 60
     batch_size = 256
+    save_interval = 10  # 每隔多少个 episode 保存一次模型
 
     for episode in range(num_episodes):
         state, _ = env.reset()
@@ -31,10 +39,9 @@ def main():
         for t in range(max_timesteps):
             action = sac.select_action(state)
             action = torch.clamp(action, 0, 1)
-            # action_numpy = action.cpu().numpy().reshape((env.NUM_SATELLITES, env.NUM_GROUND_USER))
 
             try:
-                next_state, reward, done, _ = env.step(action)  # 确保传递的是正确的numpy数组
+                next_state, reward, done, _ = env.step(action)
             except Exception as e:
                 print(f"Error during environment step: {e}")
                 break
@@ -54,12 +61,18 @@ def main():
 
         print(f"Episode {episode + 1}, Reward: {episode_reward}")
 
-        if (episode + 1) % 10 == 0:
-            sac.save(f"sac_checkpoint_{episode + 1}")
+        # 定期保存模型
+        if (episode + 1) % save_interval == 0:
+            sac.save("sac_checkpoint")
+            print(f"模型已保存: Episode {episode + 1}")
 
         if (episode + 1) % 100 == 0:
             avg_reward = np.mean([env.step(sac.select_action(flatten_state(env.reset()[0]).to(device)))[1] for _ in range(10)])
             print(f"Episode {episode + 1}, Average Reward over 10 episodes: {avg_reward}")
+
+    # 训练结束后保存最终模型
+    sac.save("sac_final")
+    print("最终模型已保存")
 
     env.close()
 
