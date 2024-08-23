@@ -6,9 +6,9 @@ from sac import SAC
 from utils import flatten_state
 
 
-def plot_rewards(rewards, avg_rewards, save_path='rewards_plot.png'):
+def plot_rewards(episode_rewards, avg_rewards, save_path='rewards_plot.png'):
     plt.figure(figsize=(12, 8))
-    plt.plot(rewards, label='Episode Reward')
+    plt.plot(episode_rewards, label='Episode Reward')
     plt.plot(avg_rewards, label='Average Reward (over 10 episodes)', linestyle='--')
     plt.xlabel('Episode')
     plt.ylabel('Reward')
@@ -83,11 +83,11 @@ def main():
             sac.save("sac_checkpoint")
             print(f"模型已保存: Episode {episode + 1}")
 
-        if (episode + 1) % 100 == 0:
-            avg_reward = np.mean(
-                [env.step(sac.select_action(flatten_state(env.reset()[0]).to(device)))[1] for _ in range(10)])
+        # 计算每10个episode的平均奖励
+        if (episode + 1) % 10 == 0:
+            avg_reward = np.mean(episode_rewards[-10:])
             avg_rewards.append(avg_reward)
-            print(f"Episode {episode + 1}, Average Reward over 10 episodes: {avg_reward}")
+            print(f"Episode {episode + 1}, Average Reward over last 10 episodes: {avg_reward}")
 
     # 训练结束后保存最终模型
     sac.save("sac_final")
