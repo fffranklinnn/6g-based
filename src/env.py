@@ -36,7 +36,7 @@ class Env:
         self.noise_power = self.k * self.noise_temperature * self.total_bandwidth  # 噪声功率计算
         self.angle_threshold = 15  # 单位：度
         self.w1 = 0  # 切换次数的权重
-        self.w2 = 1  # 用户传输速率的权重
+        self.w2 = 1e-7  # 用户传输速率的权重
 
         # 定义动作空间和观察空间
         self.action_space = torch.zeros(self.NUM_SATELLITES * self.NUM_GROUND_USER, dtype=torch.int)
@@ -191,6 +191,7 @@ class Env:
         except Exception as e:
             print(f"Error reshaping or moving action to device: {e}")
             raise
+        # print(f"The action is:\n{action_matrix}")
 
         if self.current_time_step >= self.NUM_TIME_SLOTS:
             print("Reached the end of time slots, terminating...")
@@ -304,14 +305,32 @@ class Env:
 
     def calculate_reward(self, action_matrix: torch.Tensor) -> float:
         reward = 0
+        # print(self.channel_capacity)
         # 假设 self.channel_capacity 已经不再使用时间维度
+        # 对应元素相乘
+        result = torch.mul(action_matrix, self.channel_capacity)
+        # print(result)
+        # 找到张量中非零元素的索引
+        nonzero_indices = torch.nonzero(result)
+
+        # 提取出非零元素
+        nonzero_elements = result[nonzero_indices[:, 0], nonzero_indices[:, 1]]
+
+        # 对非零元素进行相加
+        capacity = torch.sum(nonzero_elements)
+        reward = self.w2 * capacity
+        '''
+        # 或者直接使用 * 运算符
+        # result = tensor1 * tensor2
         for satellite_index in range(self.NUM_SATELLITES):
             for user_index in range(self.NUM_GROUND_USER):
                 if action_matrix[satellite_index, user_index] == 1:
+                    #print(self.channel_capacity[0,3])
                     capacity = self.channel_capacity[satellite_index, user_index]
-                    # print(f"the capacity is {capacity}"+f"the Sindex is {satellite_index}"+f"the user is {user_index}")
+                    #print(f"the capacity is {capacity}"+f"the Sindex is {satellite_index}"+f"the user is {user_index}")
                     reward += self.w2 * capacity  # 增加奖励，基于信道容量
-
+                    #print(reward)
+        '''
         # 减少奖励，基于用户切换次数
         # 注意：这里假设 self.switch_count 已经被更新以反映最新的切换情况
         reward -= self.w1 * sum(self.switch_count)
