@@ -319,24 +319,12 @@ class Env:
         # 对非零元素进行相加
         capacity = torch.sum(nonzero_elements)
         reward = self.w2 * capacity
-        '''
-        # 或者直接使用 * 运算符
-        # result = tensor1 * tensor2
-        for satellite_index in range(self.NUM_SATELLITES):
-            for user_index in range(self.NUM_GROUND_USER):
-                if action_matrix[satellite_index, user_index] == 1:
-                    #print(self.channel_capacity[0,3])
-                    capacity = self.channel_capacity[satellite_index, user_index]
-                    #print(f"the capacity is {capacity}"+f"the Sindex is {satellite_index}"+f"the user is {user_index}")
-                    reward += self.w2 * capacity  # 增加奖励，基于信道容量
-                    #print(reward)
-        '''
         # 减少奖励，基于用户切换次数
         # 注意：这里假设 self.switch_count 已经被更新以反映最新的切换情况
         reward -= self.w1 * sum(self.switch_count)
 
         # print(f"Calculated reward: {reward}")
-        return reward
+        return reward.item()
 
     def calculate_distance_matrix(self) -> torch.Tensor:
         # 获取所有时间段的卫星高度和仰角
@@ -352,8 +340,6 @@ class Env:
             (self.radius_earth + sat_heights) ** 2 - self.radius_earth ** 2 * torch.cos(torch.deg2rad(eval_angles)) ** 2
         )
         # print(f"[calculate_distance_matrix] Distance matrix shape: {distance.shape}")
-        # 断言验证最终形状
-        # assert distance.shape == (61, 10, 301), f"Unexpected shape: {distance.shape}"
 
         return distance
 
@@ -376,11 +362,6 @@ class Env:
 
         # 计算 CNR（线性值），假设 self.noise_power 是标量
         CNR_linear = received_power_watts / self.noise_power
-        # print(f"CNR Linear:",{CNR_linear})
-        # 返回 CNR 的对数值（单位：dB），保持矩阵形状
-        # CNR = 10 * torch.log10(CNR_linear)
-        # print(f"CNR:",{CNR})
-        # print(f"[calculate_CNR_matrix] CNR matrix shape: {CNR.shape}")  # [10,301,301]
         return CNR_linear
 
     def calculate_interference_matrix(self, time_slot: int, action_matrix: torch.Tensor) -> torch.Tensor:
@@ -427,12 +408,6 @@ class Env:
 
     def close(self):
         pass
-
-    def ensure_tensor(self, data) -> torch.Tensor:
-        if not isinstance(data, torch.Tensor):
-            data = torch.tensor(data, dtype=torch.int).to(self.device)
-        # print(f"Ensured tensor shape: {data.shape}")
-        return data
 
     def terminate(self) -> Tuple[torch.Tensor, float, bool, dict]:
         observation = torch.zeros(self._calculate_observation_shape(), device=self.device)
