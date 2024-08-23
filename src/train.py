@@ -1,8 +1,21 @@
 import torch
 import numpy as np
+import matplotlib.pyplot as plt
 from env import Env  # 假设 env.py 中的 Env 类已经导入
 from sac import SAC
 from utils import flatten_state
+
+
+def plot_rewards(rewards, avg_rewards, save_path='rewards_plot.png'):
+    plt.figure(figsize=(12, 8))
+    plt.plot(rewards, label='Episode Reward')
+    plt.plot(avg_rewards, label='Average Reward (over 10 episodes)', linestyle='--')
+    plt.xlabel('Episode')
+    plt.ylabel('Reward')
+    plt.title('Training Rewards')
+    plt.legend()
+    plt.savefig(save_path)
+    plt.close()
 
 
 def main():
@@ -29,6 +42,9 @@ def main():
     max_timesteps = 60
     batch_size = 256
     save_interval = 10  # 每隔多少个 episode 保存一次模型
+
+    episode_rewards = []
+    avg_rewards = []
 
     for episode in range(num_episodes):
         state, _ = env.reset()
@@ -59,6 +75,7 @@ def main():
             if done:
                 break
 
+        episode_rewards.append(episode_reward)
         print(f"Episode {episode + 1}, Reward: {episode_reward}")
 
         # 定期保存模型
@@ -67,12 +84,17 @@ def main():
             print(f"模型已保存: Episode {episode + 1}")
 
         if (episode + 1) % 100 == 0:
-            avg_reward = np.mean([env.step(sac.select_action(flatten_state(env.reset()[0]).to(device)))[1] for _ in range(10)])
+            avg_reward = np.mean(
+                [env.step(sac.select_action(flatten_state(env.reset()[0]).to(device)))[1] for _ in range(10)])
+            avg_rewards.append(avg_reward)
             print(f"Episode {episode + 1}, Average Reward over 10 episodes: {avg_reward}")
 
     # 训练结束后保存最终模型
     sac.save("sac_final")
     print("最终模型已保存")
+
+    # 绘制奖励曲线
+    plot_rewards(episode_rewards, avg_rewards)
 
     env.close()
 
