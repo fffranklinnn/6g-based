@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.optim as optim
 from collections import deque
 import random
-import numpy as np
+from Normalizer import ComplexNormalizer  # 导入 ComplexNormalizer 类
 
 
 # 定义Actor网络
@@ -18,9 +18,7 @@ class Actor(nn.Module):
     def forward(self, state):
         a = torch.relu(self.l1(state))
         a = torch.relu(self.l2(a))
-        # a = torch.sigmoid(self.l3(a))
         return self.max_action * torch.tanh(self.l3(a))
-        #return torch.sigmoid(self.l3(a))
 
 
 # 定义Critic网络
@@ -46,7 +44,6 @@ class ReplayBuffer:
         self.device = device
 
     def add(self, state, action, next_state, reward, not_done):
-        # 直接将输入转换为Tensor并存储，确保所有数据都在正确的设备上
         state = torch.as_tensor(state, device=self.device)
         action = torch.as_tensor(action, device=self.device)
         next_state = torch.as_tensor(next_state, device=self.device)
@@ -58,7 +55,6 @@ class ReplayBuffer:
         batch = random.sample(self.buffer, batch_size)
         state, action, next_state, reward, not_done = zip(*batch)
 
-        # 使用torch.stack来合并列表中的Tensor
         state = torch.stack(state, dim=0).to(self.device)
         action = torch.stack(action, dim=0).to(self.device)
         next_state = torch.stack(next_state, dim=0).to(self.device)
@@ -73,7 +69,7 @@ class ReplayBuffer:
 
 # 定义SAC算法
 class SAC:
-    def __init__(self, state_dim, action_dim, max_action, device):
+    def __init__(self, state_dim, action_dim, max_action, device, num_satellites, num_ground_user):
         self.device = device
 
         self.actor = Actor(state_dim, action_dim, max_action).to(self.device)
@@ -96,9 +92,13 @@ class SAC:
         self.tau = 0.005
         self.alpha = 0.2
 
-    def select_action(self,state):
+        self.normalizer = ComplexNormalizer(num_satellites, num_ground_user)  # 初始化归一化器
+
+    def select_action(self, state):
+        state = self.normalizer.normalize(state.cpu().numpy())  # 归一化状态
+        state = torch.FloatTensor(state).to(self.device).unsqueeze(0)
         with torch.no_grad():
-            return self.actor(state)
+            return self.actor(state).cpu().data.numpy().flatten()
 
     def update_parameters(self, batch_size):
         if len(self.replay_buffer) < batch_size:
@@ -106,18 +106,20 @@ class SAC:
 
         state, action, next_state, reward, not_done = self.replay_buffer.sample(batch_size)
 
+        state = self.normalizer.normalize(state.cpu().numpy())  # 归一化状态
+        next_state = self.normalizer.normalize(next_state.cpu().numpy())  # 归一化下一状态
+
+        state = torch.FloatTensor(state).to(self.device)
+        next_state = torch.FloatTensor(next_state).to(self.device)
+
         with torch.no_grad():
             next_action = self.actor(next_state)
             target_q1 = self.target_critic1(next_state, next_action)
             target_q2 = self.target_critic2(next_state, next_action)
             target_q = reward + not_done * self.discount * torch.min(target_q1, target_q2)
 
-        #target_q = target_q.unsqueeze(1)
         current_q1 = self.critic1(state, action)
         current_q2 = self.critic2(state, action)
-        # 调整输入张量的形状
-        current_q1 = current_q1.expand(-1, 256)
-        current_q2 = current_q2.expand(-1, 256)
 
         critic1_loss = nn.MSELoss()(current_q1, target_q)
         critic2_loss = nn.MSELoss()(current_q2, target_q)
@@ -155,3 +157,13 @@ class SAC:
         self.target_critic1.load_state_dict(torch.load(filename + "_target_critic1"))
         self.target_critic2.load_state_dict(torch.load(filename + "_target_critic2"))
 
+    def interact_with_environment(self, env, num_steps):
+        state = env.reset()
+        for _ in range(num_steps):
+            action = self.select_action(state)
+            next_state, reward, done, _ = env.step(action)
+            self.normalizer.update(state)  # 更新归一化器
+            self.replay_buffer.add(state, action, next_state, reward, float(not done))
+            state = next_state
+            if done:
+                state = env.reset()
