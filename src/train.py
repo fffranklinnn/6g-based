@@ -1,21 +1,11 @@
+import random
 import torch
 import numpy as np
-import matplotlib.pyplot as plt
+from matplotlib import pyplot as plt
+
 from env import Env  # 假设 env.py 中的 Env 类已经导入
 from sac import SAC
 from utils import flatten_state
-
-
-def plot_rewards(episode_rewards, avg_rewards, save_path='rewards_plot.png'):
-    plt.figure(figsize=(12, 8))
-    plt.plot(episode_rewards, label='Episode Reward')
-    plt.plot(avg_rewards, label='Average Reward (over 10 episodes)', linestyle='--')
-    plt.xlabel('Episode')
-    plt.ylabel('Reward')
-    plt.title('Training Rewards')
-    plt.legend()
-    plt.savefig(save_path)
-    plt.close()
 
 
 def main():
@@ -31,33 +21,53 @@ def main():
 
     sac = SAC(flattened_state_dim, action_dim, max_action, device)
 
-    # 尝试加载之前保存的模型
-    try:
-        sac.load("sac_checkpoint")
-        print("模型加载成功")
-    except FileNotFoundError:
-        print("没有找到保存的模型，开始新的训练")
-
-    num_episodes = 100
+    num_episodes = 10
     max_timesteps = 60
     batch_size = 256
-    save_interval = 10  # 每隔多少个 episode 保存一次模型
 
-    episode_rewards = []
-    avg_rewards = []
+    def adjust_action(action, num_satellites, num_users):
+        # 将动作reshape为二维数组，表示每个用户与每个卫星的连接情况
+        action_2d = action.view(num_satellites, num_users)
 
+        # 确保每个用户只连接一个卫星，每个卫星只服务一个用户
+        for satellite_idx in range(num_satellites):
+            selected_user_idx = torch.argmax(action_2d[satellite_idx])
+            for user_idx in range(num_users):
+                if user_idx != selected_user_idx:
+                    action_2d[satellite_idx][user_idx] = 0
+
+        for user_idx in range(num_users):
+            # 获取当前列的索引
+            col_indices = torch.nonzero(action_2d[:, user_idx]).view(-1)
+
+            # 如果当前列有多个元素为1，随机选择一个索引，将其他元素设为0
+            if col_indices.size(0) > 1:
+                selected_idx = torch.randint(0, col_indices.size(0), (1,))
+                for idx in range(col_indices.size(0)):
+                    if idx != selected_idx:
+                        action_2d[col_indices[idx], user_idx] = 0
+        # 将调整后的二维数组重新展平为一维数组作为最终动作
+        adjusted_action = action_2d.view(-1)
+
+        return adjusted_action
+
+    episode_rewards = []  # 用于存储每个 episode 的奖励
     for episode in range(num_episodes):
         state, _ = env.reset()
         state = flatten_state(state).to(device)
-
+        print(state)
         episode_reward = 0
 
         for t in range(max_timesteps):
             action = sac.select_action(state)
-            action = torch.clamp(action, 0, 1)
+            adjusted_action = adjust_action(action, env.NUM_SATELLITES, env.NUM_GROUND_USER)
+            #print(action)
+            #action = torch.clamp(action, 0, 1)
+            #print(action)
+            #action_numpy = action.cpu().numpy().reshape((env.NUM_SATELLITES, env.NUM_GROUND_USER))
 
             try:
-                next_state, reward, done, _ = env.step(action)
+                next_state, reward, done, _ = env.step(adjusted_action)  # 确保传递的是正确的numpy数组
             except Exception as e:
                 print(f"Error during environment step: {e}")
                 break
@@ -65,37 +75,32 @@ def main():
             next_state = flatten_state(next_state).to(device)
             not_done = 1.0 - float(done)
 
-            sac.replay_buffer.add(state.cpu().numpy(), action, next_state.cpu().numpy(), reward, not_done)
+            sac.replay_buffer.add(state.cpu().numpy(), adjusted_action, next_state.cpu().numpy(), reward, not_done)
             state = next_state
             episode_reward += reward
 
-            if len(sac.replay_buffer) > batch_size:
-                sac.update_parameters(batch_size)
+            #if len(sac.replay_buffer) > batch_size:
+            #    sac.update_parameters(batch_size)
 
             if done:
                 break
-
-        episode_rewards.append(episode_reward)
+        episode_rewards.append(episode_reward.cpu().numpy())  # 将张量移动到 CPU 上并转换为 NumPy 数组，然后记录当前 episode 的奖励
         print(f"Episode {episode + 1}, Reward: {episode_reward}")
 
-        # 定期保存模型
-        if (episode + 1) % save_interval == 0:
-            sac.save("sac_checkpoint")
-            print(f"模型已保存: Episode {episode + 1}")
-
-        # 计算每10个episode的平均奖励
         if (episode + 1) % 10 == 0:
-            avg_reward = np.mean(episode_rewards[-10:])
-            avg_rewards.append(avg_reward)
-            print(f"Episode {episode + 1}, Average Reward over last 10 episodes: {avg_reward}")
+            sac.save(f"sac_checkpoint_{episode + 1}")
 
-    # 训练结束后保存最终模型
-    sac.save("sac_final")
-    print("最终模型已保存")
+        if (episode + 1) % 100 == 0:
+            avg_reward = np.mean([env.step(sac.select_action(flatten_state(env.reset()[0]).to(device)))[1] for _ in range(10)])
+            print(f"Episode {episode + 1}, Average Reward over 10 episodes: {avg_reward}")
 
-    # 绘制奖励曲线
-    plot_rewards(episode_rewards, avg_rewards)
-
+    plt.figure()
+    plt.plot(range(1, num_episodes + 1), episode_rewards, marker='o')
+    plt.xlabel('Episode')
+    plt.ylabel('Reward')
+    plt.title('Reward per Episode')
+    plt.grid()
+    plt.show()
     env.close()
 
 

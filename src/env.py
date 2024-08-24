@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 import torch
 import os
@@ -35,8 +36,8 @@ class Env:
         self.EIRP_watts = 10 ** ((self.EIRP - 30) / 10)  # 将 EIRP 从 dBm 转换为瓦特
         self.noise_power = self.k * self.noise_temperature * self.total_bandwidth  # 噪声功率计算
         self.angle_threshold = 15  # 单位：度
-        self.w1 = 0  # 切换次数的权重
-        self.w2 = 1e-7  # 用户传输速率的权重
+        self.w1 = 10  # 切换次数的权重
+        self.w2 = 0.1  # 用户传输速率的权重
 
         # 定义动作空间和观察空间
         self.action_space = torch.zeros(self.NUM_SATELLITES * self.NUM_GROUND_USER, dtype=torch.int)
@@ -69,6 +70,7 @@ class Env:
         # 初始化覆盖指示变量和接入决策变量
         self.coverage_indicator = self.initialize_coverage()
         self.access_decision = torch.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER), dtype=torch.int)  # 仅存储当前时隙的接入决策
+
         self.current_time_step = 0
         self.switch_count = torch.zeros(self.NUM_GROUND_USER, dtype=torch.int)
 
@@ -191,14 +193,18 @@ class Env:
         except Exception as e:
             print(f"Error reshaping or moving action to device: {e}")
             raise
-        # print(f"The action is:\n{action_matrix}")
 
         if self.current_time_step >= self.NUM_TIME_SLOTS:
             print("Reached the end of time slots, terminating...")
             return self.terminate()
 
         self.access_decision = action_matrix
-        print(self.access_decision)
+        numpy_array = self.access_decision.cpu().numpy()
+
+        # 打印转换后的 NumPy 数组
+        #np.set_printoptions(threshold=np.inf)
+        print(numpy_array)
+        #print(self.access_decision)
         # print(f"Access decision updated for time step {self.current_time_step}")
 
         if self.current_time_step > 0:
@@ -305,11 +311,11 @@ class Env:
 
     def calculate_reward(self, action_matrix: torch.Tensor) -> float:
         reward = 0
-        # print(self.channel_capacity)
+        #print(self.channel_capacity)
         # 假设 self.channel_capacity 已经不再使用时间维度
         # 对应元素相乘
         result = torch.mul(action_matrix, self.channel_capacity)
-        # print(result)
+        #print(result)
         # 找到张量中非零元素的索引
         nonzero_indices = torch.nonzero(result)
 
@@ -319,12 +325,24 @@ class Env:
         # 对非零元素进行相加
         capacity = torch.sum(nonzero_elements)
         reward = self.w2 * capacity
+        '''
+        # 或者直接使用 * 运算符
+        # result = tensor1 * tensor2
+        for satellite_index in range(self.NUM_SATELLITES):
+            for user_index in range(self.NUM_GROUND_USER):
+                if action_matrix[satellite_index, user_index] == 1:
+                    #print(self.channel_capacity[0,3])
+                    capacity = self.channel_capacity[satellite_index, user_index]
+                    #print(f"the capacity is {capacity}"+f"the Sindex is {satellite_index}"+f"the user is {user_index}")
+                    reward += self.w2 * capacity  # 增加奖励，基于信道容量
+                    #print(reward)
+        '''
         # 减少奖励，基于用户切换次数
         # 注意：这里假设 self.switch_count 已经被更新以反映最新的切换情况
         reward -= self.w1 * sum(self.switch_count)
 
-        # print(f"Calculated reward: {reward}")
-        return reward.item()
+        #print(f"Calculated reward: {reward}")
+        return reward
 
     def calculate_distance_matrix(self) -> torch.Tensor:
         # 获取所有时间段的卫星高度和仰角
@@ -340,6 +358,8 @@ class Env:
             (self.radius_earth + sat_heights) ** 2 - self.radius_earth ** 2 * torch.cos(torch.deg2rad(eval_angles)) ** 2
         )
         # print(f"[calculate_distance_matrix] Distance matrix shape: {distance.shape}")
+        # 断言验证最终形状
+        # assert distance.shape == (61, 10, 301), f"Unexpected shape: {distance.shape}"
 
         return distance
 
@@ -362,6 +382,11 @@ class Env:
 
         # 计算 CNR（线性值），假设 self.noise_power 是标量
         CNR_linear = received_power_watts / self.noise_power
+        # print(f"CNR Linear:",{CNR_linear})
+        # 返回 CNR 的对数值（单位：dB），保持矩阵形状
+        # CNR = 10 * torch.log10(CNR_linear)
+        # print(f"CNR:",{CNR})
+        # print(f"[calculate_CNR_matrix] CNR matrix shape: {CNR.shape}")  # [10,301,301]
         return CNR_linear
 
     def calculate_interference_matrix(self, time_slot: int, action_matrix: torch.Tensor) -> torch.Tensor:
@@ -409,6 +434,12 @@ class Env:
     def close(self):
         pass
 
+    def ensure_tensor(self, data) -> torch.Tensor:
+        if not isinstance(data, torch.Tensor):
+            data = torch.tensor(data, dtype=torch.int).to(self.device)
+        # print(f"Ensured tensor shape: {data.shape}")
+        return data
+
     def terminate(self) -> Tuple[torch.Tensor, float, bool, dict]:
         observation = torch.zeros(self._calculate_observation_shape(), device=self.device)
         reward = 0.0
@@ -446,6 +477,7 @@ class Env:
 
         # 直接更新信道容量，不考虑时间维度
         self.channel_capacity = self.total_bandwidth * torch.log2(1.0 + CNR / (INR + 1.0))
+        #print(self.channel_capacity)
         # 确保 channel_capacity 形状正确
         if self.channel_capacity.shape != (self.NUM_SATELLITES, self.NUM_GROUND_USER):
             self.channel_capacity = self.channel_capacity.transpose(0, 1)

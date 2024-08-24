@@ -11,8 +11,8 @@ class Actor(nn.Module):
     def __init__(self, state_dim, action_dim, max_action):
         super(Actor, self).__init__()
         self.l1 = nn.Linear(state_dim, 256)
-        self.l2 = nn.Linear(256, 256)
-        self.l3 = nn.Linear(256, action_dim)
+        self.l2 = nn.Linear(256, 128)
+        self.l3 = nn.Linear(128, action_dim)
         self.max_action = max_action
 
     def forward(self, state):
@@ -20,6 +20,7 @@ class Actor(nn.Module):
         a = torch.relu(self.l2(a))
         # a = torch.sigmoid(self.l3(a))
         return self.max_action * torch.tanh(self.l3(a))
+        #return torch.sigmoid(self.l3(a))
 
 
 # 定义Critic网络
@@ -27,8 +28,8 @@ class Critic(nn.Module):
     def __init__(self, state_dim, action_dim):
         super(Critic, self).__init__()
         self.l1 = nn.Linear(state_dim + action_dim, 256)
-        self.l2 = nn.Linear(256, 256)
-        self.l3 = nn.Linear(256, 1)
+        self.l2 = nn.Linear(256, 128)
+        self.l3 = nn.Linear(128, 1)
 
     def forward(self, state, action):
         q = torch.relu(self.l1(torch.cat([state, action], dim=1)))
@@ -95,7 +96,7 @@ class SAC:
         self.tau = 0.005
         self.alpha = 0.2
 
-    def select_action(self, state):
+    def select_action(self,state):
         with torch.no_grad():
             return self.actor(state)
 
@@ -111,8 +112,13 @@ class SAC:
             target_q2 = self.target_critic2(next_state, next_action)
             target_q = reward + not_done * self.discount * torch.min(target_q1, target_q2)
 
+        #target_q = target_q.unsqueeze(1)
         current_q1 = self.critic1(state, action)
         current_q2 = self.critic2(state, action)
+        # 调整输入张量的形状
+        current_q1 = current_q1.expand(-1, 256)
+        current_q2 = current_q2.expand(-1, 256)
+
         critic1_loss = nn.MSELoss()(current_q1, target_q)
         critic2_loss = nn.MSELoss()(current_q2, target_q)
 
@@ -141,22 +147,11 @@ class SAC:
         torch.save(self.critic2.state_dict(), filename + "_critic2")
         torch.save(self.target_critic1.state_dict(), filename + "_target_critic1")
         torch.save(self.target_critic2.state_dict(), filename + "_target_critic2")
-        torch.save(self.actor_optimizer.state_dict(), filename + "_actor_optimizer")
-        torch.save(self.critic1_optimizer.state_dict(), filename + "_critic1_optimizer")
-        torch.save(self.critic2_optimizer.state_dict(), filename + "_critic2_optimizer")
 
     def load(self, filename):
-        self.actor.load_state_dict(torch.load(filename + "_actor", weights_only=True))
-        self.critic1.load_state_dict(torch.load(filename + "_critic1", weights_only=True))
-        self.critic2.load_state_dict(torch.load(filename + "_critic2", weights_only=True))
-        self.target_critic1.load_state_dict(torch.load(filename + "_target_critic1", weights_only=True))
-        self.target_critic2.load_state_dict(torch.load(filename + "_target_critic2", weights_only=True))
-        self.actor_optimizer.load_state_dict(torch.load(filename + "_actor_optimizer", weights_only=True))
-        self.critic1_optimizer.load_state_dict(torch.load(filename + "_critic1_optimizer", weights_only=True))
-        self.critic2_optimizer.load_state_dict(torch.load(filename + "_critic2_optimizer", weights_only=True))
-        self.actor.to(self.device)
-        self.critic1.to(self.device)
-        self.critic2.to(self.device)
-        self.target_critic1.to(self.device)
-        self.target_critic2.to(self.device)
+        self.actor.load_state_dict(torch.load(filename + "_actor"))
+        self.critic1.load_state_dict(torch.load(filename + "_critic1"))
+        self.critic2.load_state_dict(torch.load(filename + "_critic2"))
+        self.target_critic1.load_state_dict(torch.load(filename + "_target_critic1"))
+        self.target_critic2.load_state_dict(torch.load(filename + "_target_critic2"))
 
