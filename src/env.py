@@ -36,8 +36,8 @@ class Env:
         self.EIRP_watts = 10 ** ((self.EIRP - 30) / 10)  # 将 EIRP 从 dBm 转换为瓦特
         self.noise_power = self.k * self.noise_temperature * self.total_bandwidth  # 噪声功率计算
         self.angle_threshold = 15  # 单位：度
-        self.w1 = 10  # 切换次数的权重
-        self.w2 = 0.1  # 用户传输速率的权重
+        self.w1 = 1e-5  # 切换次数的权重
+        self.w2 = 1e-8  # 用户传输速率的权重
 
         # 定义动作空间和观察空间
         self.action_space = torch.zeros(self.NUM_SATELLITES * self.NUM_GROUND_USER, dtype=torch.int)

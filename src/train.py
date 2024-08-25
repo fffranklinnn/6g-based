@@ -1,4 +1,4 @@
-import random
+# import random
 import torch
 import numpy as np
 from matplotlib import pyplot as plt
@@ -19,7 +19,7 @@ def main():
     action_dim = env.action_space.numel()
     max_action = 1  # 确认这是否适合你的环境
 
-    sac = SAC(flattened_state_dim, action_dim, max_action, device)
+    sac = SAC(flattened_state_dim, action_dim, max_action, device,env.NUM_SATELLITES,env.NUM_GROUND_USER)
 
     num_episodes = 10
     max_timesteps = 60
