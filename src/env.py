@@ -36,7 +36,7 @@ class Env:
         self.EIRP_watts = 10 ** ((self.EIRP - 30) / 10)  # 将 EIRP 从 dBm 转换为瓦特
         self.noise_power = self.k * self.noise_temperature * self.total_bandwidth  # 噪声功率计算
         self.angle_threshold = 15  # 单位：度
-        self.w1 = 1e-5  # 切换次数的权重
+        self.w1 = 5e-6  # 切换次数的权重
         self.w2 = 1e-8  # 用户传输速率的权重
 
         # 定义动作空间和观察空间
@@ -181,7 +181,7 @@ class Env:
         return coverage
 
     def step(self, action: torch.Tensor) -> Tuple[torch.Tensor, float, bool, dict]:
-        print(f"Starting step {self.current_time_step}/{self.NUM_TIME_SLOTS}")
+        # print(f"Starting step {self.current_time_step}/{self.NUM_TIME_SLOTS}")
 
         # 确保 action 是一个 torch.Tensor
         if not isinstance(action, torch.Tensor):
@@ -212,7 +212,7 @@ class Env:
 
         self.update_rates_and_capacity(action_matrix)
         reward = self.calculate_reward(action_matrix)
-        print(f"Reward at step {self.current_time_step}: {reward}")
+        # print(f"Reward at step {self.current_time_step}: {reward}")
 
         self.current_time_step += 1
         is_done = self.current_time_step >= self.NUM_TIME_SLOTS
@@ -246,8 +246,6 @@ class Env:
         self.access_decision = torch.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER), dtype=torch.int,
                                            device=self.device)
 
-        # 初始化覆盖指示变量
-        # self.initialize_coverage_indicator()
         # 假设 self.access_decision 在此之前已经根据某种逻辑被赋值
         self.previous_access_strategy_space = self.access_decision.clone()
 
@@ -265,7 +263,7 @@ class Env:
         # 重置用户需求速率
         self.user_demand_rate = torch.empty((self.NUM_GROUND_USER, self.NUM_TIME_SLOTS), dtype=torch.float32,
                                             device=self.device)
-        self.user_demand_rate.uniform_(1e9, 10e9)
+        self.user_demand_rate.uniform_(1e12, 10e13)
 
         # 获取初始观察
         observation = self.get_observation()
@@ -324,7 +322,7 @@ class Env:
 
         # 对非零元素进行相加
         capacity = torch.sum(nonzero_elements)
-        reward = self.w2 * capacity
+        reward += self.w2 * capacity
         '''
         # 或者直接使用 * 运算符
         # result = tensor1 * tensor2

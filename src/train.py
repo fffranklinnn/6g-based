@@ -6,6 +6,7 @@ from matplotlib import pyplot as plt
 from env import Env  # 假设 env.py 中的 Env 类已经导入
 from sac import SAC
 from utils import flatten_state
+import Normalizer
 
 
 def main():
@@ -21,7 +22,8 @@ def main():
 
     sac = SAC(flattened_state_dim, action_dim, max_action, device, env.NUM_SATELLITES, env.NUM_GROUND_USER)
 
-    num_episodes = 10
+    normalizer = Normalizer.ComplexNormalizer(env.NUM_SATELLITES,env.NUM_GROUND_USER)
+    num_episodes = 50
     max_timesteps = 60
     batch_size = 256
 
@@ -56,44 +58,68 @@ def main():
     for episode in range(num_episodes):
         state, _ = env.reset()
         state = flatten_state(state).to(device)
-        # print(state)
+        # 假设state是一个PyTorch张量
+        if isinstance(state, torch.Tensor):
+            state_np = state.cpu().numpy()  # 直接转换为NumPy数组
+        else:
+            state_np = state  # state已经是NumPy数组或其他类型，不需要转换
+
+        # 现在可以安全地调用update方法
+        normalizer.update(state_np)
+
+        normalizer_state = normalizer.normalize(state_np)
+        normalized_state_tensor = torch.tensor(normalizer_state).float().to(device)
+
+        state = normalized_state_tensor  # 此时的state为PyTorch张量
         episode_reward = 0
 
         for t in range(max_timesteps):
             action = sac.select_action(state)
             action_tensor = torch.tensor(action).to(device)  # 确保 action 是 PyTorch 张量
-            adjusted_action = adjust_action(action_tensor, env.NUM_SATELLITES, env.NUM_GROUND_USER)
-            #print(action)
-            #action = torch.clamp(action, 0, 1)
-            #print(action)
-            #action_numpy = action.cpu().numpy().reshape((env.NUM_SATELLITES, env.NUM_GROUND_USER))
 
             try:
-                next_state, reward, done, _ = env.step(adjusted_action.cpu().numpy())  # 确保传递的是正确的numpy数组
+                next_state, reward, done, _ = env.step(action_tensor.cpu().numpy())  # 使用转换后的action
             except Exception as e:
                 print(f"Error during environment step: {e}")
                 break
 
             next_state = flatten_state(next_state).to(device)
+            if isinstance(next_state, torch.Tensor):
+                next_state_np = next_state.cpu().numpy()  # 转换为NumPy数组
+            else:
+                next_state_np = next_state  # next_state已经是NumPy数组或其他类型，不需要转换
+
+            # 现在可以安全地调用update方法
+            normalizer.update(next_state_np)
+
+            normalizer_state = normalizer.normalize(next_state_np)
+            normalized_state_tensor = torch.tensor(normalizer_state).float().to(device)
+
+            next_state = normalized_state_tensor
             not_done = 1.0 - float(done)
 
-            sac.replay_buffer.add(state.cpu().numpy(), adjusted_action.cpu().numpy(), next_state.cpu().numpy(), reward, not_done)
-            state = next_state
+            # 现在state, action, next_state都是PyTorch张量，需要转换为NumPy数组以存储
+            sac.replay_buffer.add(state.cpu().numpy(), action_tensor.cpu().numpy(), next_state.cpu().numpy(), reward,
+                                  not_done)
+
+            state = next_state  # 更新state为下一状态（PyTorch张量）
             episode_reward += reward
 
             if len(sac.replay_buffer) > batch_size:
-               sac.update_parameters(batch_size)
+                sac.update_parameters(batch_size)
 
             if done:
                 break
-        episode_rewards.append(episode_reward.cpu().numpy())  # 将张量移动到 CPU 上并转换为 NumPy 数组，然后记录当前 episode 的奖励
+        episode_rewards.append(episode_reward)  # 记录当前 episode 的奖励
         print(f"Episode {episode + 1}, Reward: {episode_reward}")
 
         if (episode + 1) % 10 == 0:
             sac.save(f"sac_checkpoint_{episode + 1}")
 
         if (episode + 1) % 100 == 0:
-            avg_reward = np.mean([env.step(sac.select_action(flatten_state(env.reset()[0]).to(device)))[1] for _ in range(10)])
+            avg_reward = np.mean(
+                [env.step(torch.tensor(sac.select_action(flatten_state(env.reset()[0]).to(device))).cpu().numpy())[1]
+                 for _ in range(10)])
             print(f"Episode {episode + 1}, Average Reward over 10 episodes: {avg_reward}")
 
     plt.figure()
