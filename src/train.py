@@ -23,7 +23,7 @@ def main():
     sac = SAC(flattened_state_dim, action_dim, max_action, device, env.NUM_SATELLITES, env.NUM_GROUND_USER)
 
     normalizer = Normalizer.ComplexNormalizer(env.NUM_SATELLITES,env.NUM_GROUND_USER)
-    num_episodes = 50
+    num_episodes = 500
     max_timesteps = 60
     batch_size = 256
 
@@ -103,7 +103,7 @@ def main():
                                   not_done)
 
             state = next_state  # 更新state为下一状态（PyTorch张量）
-            episode_reward += reward
+            episode_reward += reward.item()
 
             if len(sac.replay_buffer) > batch_size:
                 sac.update_parameters(batch_size)
@@ -113,7 +113,7 @@ def main():
         episode_rewards.append(episode_reward)  # 记录当前 episode 的奖励
         print(f"Episode {episode + 1}, Reward: {episode_reward}")
 
-        if (episode + 1) % 10 == 0:
+        if (episode + 1) % 50 == 0:
             sac.save(f"sac_checkpoint_{episode + 1}")
 
         if (episode + 1) % 100 == 0:

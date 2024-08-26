@@ -180,7 +180,8 @@ class SAC:
         # 在计算 actor_loss 之前，调整动作张量的维度
         predicted_action = self.actor(state)  # 这可能是三维的
         predicted_action_flattened = predicted_action.view(predicted_action.size(0), -1)  # 展平为二维张量
-        actor_loss = -self.critic1(state, predicted_action_flattened).mean()
+        policy_entropy = -torch.sum(predicted_action * torch.log(predicted_action + 1e-7), dim=-1).mean()
+        actor_loss = -self.critic1(state, predicted_action_flattened).mean()+self.alpha*policy_entropy
 
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
