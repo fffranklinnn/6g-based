@@ -19,14 +19,15 @@ def main():
     action_dim = env.action_space.numel()
     max_action = 1  # 确认这是否适合你的环境
 
-    sac = SAC(flattened_state_dim, action_dim, max_action, device,env.NUM_SATELLITES,env.NUM_GROUND_USER)
+    sac = SAC(flattened_state_dim, action_dim, max_action, device, env.NUM_SATELLITES, env.NUM_GROUND_USER)
 
     num_episodes = 10
     max_timesteps = 60
     batch_size = 256
 
     def adjust_action(action, num_satellites, num_users):
-        # 将动作reshape为二维数组，表示每个用户与每个卫星的连接情况
+        if not isinstance(action, torch.Tensor):
+            action = torch.tensor(action)
         action_2d = action.view(num_satellites, num_users)
 
         # 确保每个用户只连接一个卫星，每个卫星只服务一个用户
@@ -55,19 +56,20 @@ def main():
     for episode in range(num_episodes):
         state, _ = env.reset()
         state = flatten_state(state).to(device)
-        print(state)
+        # print(state)
         episode_reward = 0
 
         for t in range(max_timesteps):
             action = sac.select_action(state)
-            adjusted_action = adjust_action(action, env.NUM_SATELLITES, env.NUM_GROUND_USER)
+            action_tensor = torch.tensor(action).to(device)  # 确保 action 是 PyTorch 张量
+            adjusted_action = adjust_action(action_tensor, env.NUM_SATELLITES, env.NUM_GROUND_USER)
             #print(action)
             #action = torch.clamp(action, 0, 1)
             #print(action)
             #action_numpy = action.cpu().numpy().reshape((env.NUM_SATELLITES, env.NUM_GROUND_USER))
 
             try:
-                next_state, reward, done, _ = env.step(adjusted_action)  # 确保传递的是正确的numpy数组
+                next_state, reward, done, _ = env.step(adjusted_action.cpu().numpy())  # 确保传递的是正确的numpy数组
             except Exception as e:
                 print(f"Error during environment step: {e}")
                 break
@@ -75,12 +77,12 @@ def main():
             next_state = flatten_state(next_state).to(device)
             not_done = 1.0 - float(done)
 
-            sac.replay_buffer.add(state.cpu().numpy(), adjusted_action, next_state.cpu().numpy(), reward, not_done)
+            sac.replay_buffer.add(state.cpu().numpy(), adjusted_action.cpu().numpy(), next_state.cpu().numpy(), reward, not_done)
             state = next_state
             episode_reward += reward
 
-            #if len(sac.replay_buffer) > batch_size:
-            #    sac.update_parameters(batch_size)
+            if len(sac.replay_buffer) > batch_size:
+               sac.update_parameters(batch_size)
 
             if done:
                 break

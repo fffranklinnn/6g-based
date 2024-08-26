@@ -106,17 +106,21 @@ class SAC:
 
         state, action, next_state, reward, not_done = self.replay_buffer.sample(batch_size)
 
-        state = self.normalizer.normalize(state.cpu().numpy())  # 归一化状态
-        next_state = self.normalizer.normalize(next_state.cpu().numpy())  # 归一化下一状态
+        # 归一化状态和下一状态（避免不必要的数据传输）
+        state_np = state.cpu().numpy()
+        next_state_np = next_state.cpu().numpy()
+        state_np = self.normalizer.normalize(state_np)
+        next_state_np = self.normalizer.normalize(next_state_np)
 
-        state = torch.FloatTensor(state).to(self.device)
-        next_state = torch.FloatTensor(next_state).to(self.device)
+        state = torch.FloatTensor(state_np).to(self.device)
+        next_state = torch.FloatTensor(next_state_np).to(self.device)
 
         with torch.no_grad():
             next_action = self.actor(next_state)
             target_q1 = self.target_critic1(next_state, next_action)
             target_q2 = self.target_critic2(next_state, next_action)
-            target_q = reward + not_done * self.discount * torch.min(target_q1, target_q2)
+            min_target_q = torch.min(target_q1, target_q2)
+            target_q = reward.unsqueeze(1) + not_done.unsqueeze(1) * self.discount * min_target_q
 
         current_q1 = self.critic1(state, action)
         current_q2 = self.critic2(state, action)

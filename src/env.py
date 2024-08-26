@@ -203,7 +203,7 @@ class Env:
 
         # 打印转换后的 NumPy 数组
         #np.set_printoptions(threshold=np.inf)
-        print(numpy_array)
+        # print(numpy_array)
         #print(self.access_decision)
         # print(f"Access decision updated for time step {self.current_time_step}")
 
