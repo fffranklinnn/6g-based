@@ -1,4 +1,4 @@
-import numpy as np
+# import numpy as np
 import pandas as pd
 import torch
 import os
@@ -37,7 +37,7 @@ class Env:
         self.noise_power = self.k * self.noise_temperature * self.total_bandwidth  # 噪声功率计算
         self.angle_threshold = 15  # 单位：度
         self.w1 = 5e-6  # 切换次数的权重
-        self.w2 = 1e-8  # 用户传输速率的权重
+        self.w2 = 1e-7  # 用户传输速率的权重
 
         # 定义动作空间和观察空间
         self.action_space = torch.zeros(self.NUM_SATELLITES * self.NUM_GROUND_USER, dtype=torch.int)
@@ -199,7 +199,7 @@ class Env:
             return self.terminate()
 
         self.access_decision = action_matrix
-        numpy_array = self.access_decision.cpu().numpy()
+        # numpy_array = self.access_decision.cpu().numpy()
 
         # 打印转换后的 NumPy 数组
         #np.set_printoptions(threshold=np.inf)
@@ -226,16 +226,6 @@ class Env:
         # 在这里调用可视化函数
         # visualize_action_matrix(action_matrix.cpu().numpy())  # 确保数据在 CPU 上，并转换为 NumPy 数组
         return observation, reward, is_done, information
-
-    def initialize_coverage_indicator(self):
-        for time_slot in range(self.NUM_TIME_SLOTS):
-            for user_index in range(self.NUM_GROUND_USER):
-                for satellite_index in range(self.NUM_SATELLITES):
-                    if self.eval_angle[time_slot, user_index, satellite_index] > self.angle_threshold:
-                        self.coverage_indicator[time_slot, user_index, satellite_index] = 1
-                    else:
-                        self.coverage_indicator[time_slot, user_index, satellite_index] = 0
-        # print(f"Initialized coverage indicator with shape: {self.coverage_indicator.shape}")
 
     def reset(self, *, seed: Optional[int] = None, options: Optional[dict] = None) -> Tuple[torch.Tensor, dict]:
         # 重置当前时间步
@@ -426,17 +416,8 @@ class Env:
         total_interference_dBm = 10 * torch.log10(torch.tensor(total_interference_power_watts).clone().detach()) + 30
         return total_interference_dBm.item()
 
-    def render(self):
-        print(f"Current time step: {self.current_time_step}")
-
     def close(self):
         pass
-
-    def ensure_tensor(self, data) -> torch.Tensor:
-        if not isinstance(data, torch.Tensor):
-            data = torch.tensor(data, dtype=torch.int).to(self.device)
-        # print(f"Ensured tensor shape: {data.shape}")
-        return data
 
     def terminate(self) -> Tuple[torch.Tensor, float, bool, dict]:
         observation = torch.zeros(self._calculate_observation_shape(), device=self.device)
