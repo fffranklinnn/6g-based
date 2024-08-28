@@ -1,4 +1,5 @@
-# import random
+import os
+import random
 import torch
 import numpy as np
 from matplotlib import pyplot as plt
@@ -22,8 +23,8 @@ def main():
 
     sac = SAC(flattened_state_dim, action_dim, max_action, device, env.NUM_SATELLITES, env.NUM_GROUND_USER)
 
-    normalizer = Normalizer.ComplexNormalizer(env.NUM_SATELLITES,env.NUM_GROUND_USER)
-    num_episodes = 500
+    normalizer = Normalizer.ComplexNormalizer(env.NUM_SATELLITES, env.NUM_GROUND_USER)
+    num_episodes = 100
     max_timesteps = 60
     batch_size = 256
 
@@ -55,6 +56,9 @@ def main():
         return adjusted_action
 
     episode_rewards = []  # 用于存储每个 episode 的奖励
+    checkpoint_dir = "checkpoints"
+    os.makedirs(checkpoint_dir, exist_ok=True)
+
     for episode in range(num_episodes):
         state, _ = env.reset()
         state = flatten_state(state).to(device)
@@ -76,6 +80,7 @@ def main():
         for t in range(max_timesteps):
             action = sac.select_action(state)
             action_tensor = torch.tensor(action).to(device)  # 确保 action 是 PyTorch 张量
+            # adjust_action(action_tensor, env.NUM_SATELLITES, env.NUM_GROUND_USER)
 
             try:
                 next_state, reward, done, _ = env.step(action_tensor.cpu().numpy())  # 使用转换后的action
@@ -114,7 +119,7 @@ def main():
         print(f"Episode {episode + 1}, Reward: {episode_reward}")
 
         if (episode + 1) % 50 == 0:
-            sac.save(f"sac_checkpoint_{episode + 1}")
+            sac.save(os.path.join(checkpoint_dir, f"sac_checkpoint_{episode + 1}"))
 
         if (episode + 1) % 100 == 0:
             avg_reward = np.mean(

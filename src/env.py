@@ -201,12 +201,6 @@ class Env:
         self.access_decision = action_matrix
         # numpy_array = self.access_decision.cpu().numpy()
 
-        # 打印转换后的 NumPy 数组
-        #np.set_printoptions(threshold=np.inf)
-        # print(numpy_array)
-        #print(self.access_decision)
-        # print(f"Access decision updated for time step {self.current_time_step}")
-
         if self.current_time_step > 0:
             self.update_switch_count(action_matrix)
 
@@ -273,9 +267,6 @@ class Env:
             self.device)  # 确保这里的处理逻辑是正确的，根据你的数据结构可能需要调整
 
         observation = torch.cat([coverage, previous_access_strategy, switch_count, elevation_angles, altitudes])
-        # print(f"Observation concatenated shape: {observation.shape}")
-        # 打印形状信息以帮助调试
-        # print(f"Shapes - coverage: {coverage.shape}, previous_access_strategy: {previous_access_strategy.shape}, switch_count: {switch_count.shape}, elevation_angles: {elevation_angles.shape}, altitudes: {altitudes.shape}")
         return observation
 
     def _calculate_observation_shape(self):
@@ -313,18 +304,6 @@ class Env:
         # 对非零元素进行相加
         capacity = torch.sum(nonzero_elements)
         reward += self.w2 * capacity
-        '''
-        # 或者直接使用 * 运算符
-        # result = tensor1 * tensor2
-        for satellite_index in range(self.NUM_SATELLITES):
-            for user_index in range(self.NUM_GROUND_USER):
-                if action_matrix[satellite_index, user_index] == 1:
-                    #print(self.channel_capacity[0,3])
-                    capacity = self.channel_capacity[satellite_index, user_index]
-                    #print(f"the capacity is {capacity}"+f"the Sindex is {satellite_index}"+f"the user is {user_index}")
-                    reward += self.w2 * capacity  # 增加奖励，基于信道容量
-                    #print(reward)
-        '''
         # 减少奖励，基于用户切换次数
         # 注意：这里假设 self.switch_count 已经被更新以反映最新的切换情况
         reward -= self.w1 * sum(self.switch_count)
@@ -345,9 +324,6 @@ class Env:
         distance = self.radius_earth * (self.radius_earth + sat_heights) / torch.sqrt(
             (self.radius_earth + sat_heights) ** 2 - self.radius_earth ** 2 * torch.cos(torch.deg2rad(eval_angles)) ** 2
         )
-        # print(f"[calculate_distance_matrix] Distance matrix shape: {distance.shape}")
-        # 断言验证最终形状
-        # assert distance.shape == (61, 10, 301), f"Unexpected shape: {distance.shape}"
 
         return distance
 
@@ -370,11 +346,6 @@ class Env:
 
         # 计算 CNR（线性值），假设 self.noise_power 是标量
         CNR_linear = received_power_watts / self.noise_power
-        # print(f"CNR Linear:",{CNR_linear})
-        # 返回 CNR 的对数值（单位：dB），保持矩阵形状
-        # CNR = 10 * torch.log10(CNR_linear)
-        # print(f"CNR:",{CNR})
-        # print(f"[calculate_CNR_matrix] CNR matrix shape: {CNR.shape}")  # [10,301,301]
         return CNR_linear
 
     def calculate_interference_matrix(self, time_slot: int, action_matrix: torch.Tensor) -> torch.Tensor:

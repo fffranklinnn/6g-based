@@ -5,9 +5,6 @@ from collections import deque
 import random
 
 
-# from Normalizer import ComplexNormalizer  # 导入 ComplexNormalizer 类
-
-
 # 定义Actor网络
 class Actor(nn.Module):
     def __init__(self, state_dim, max_action, num_users=10, num_satellites=301):
@@ -113,14 +110,6 @@ class SAC:
         # self.normalizer = ComplexNormalizer(num_satellites, num_ground_user)  # 初始化归一化器
 
     def select_action(self, state):
-        # state = self.normalizer.normalize(state.cpu().numpy())  # 归一化状态
-        # try:
-        #     state = torch.FloatTensor(state)
-        # except Exception as e:
-        #     print(e)
-        #     # 可能还想打印state的信息来进一步调试
-        #     print(state)
-
         state = state.to(self.device)
         state = state.unsqueeze(0)
         with torch.no_grad():
@@ -181,7 +170,7 @@ class SAC:
         predicted_action = self.actor(state)  # 这可能是三维的
         predicted_action_flattened = predicted_action.view(predicted_action.size(0), -1)  # 展平为二维张量
         policy_entropy = -torch.sum(predicted_action * torch.log(predicted_action + 1e-7), dim=-1).mean()
-        actor_loss = -self.critic1(state, predicted_action_flattened).mean()+self.alpha*policy_entropy
+        actor_loss = -self.critic1(state, predicted_action_flattened).mean() + self.alpha * policy_entropy
 
         self.actor_optimizer.zero_grad()
         actor_loss.backward()

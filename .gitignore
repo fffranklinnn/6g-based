@@ -1,0 +1,19 @@
+# Default ignored files
+/shelf/
+/workspace.xml
+# Editor-based HTTP Client requests
+/httpRequests/
+# Datasource local storage ignored files
+/dataSources/
+/dataSources.local.xml
+# 忽略 .idea 目录
+.idea/
+
+# 忽略 .venv 目录
+.venv/
+
+# 忽略所有的 checkpoint 文件
+sac_checkpoint_*
+
+# 忽略 checkpoints 目录
+checkpoints/
