@@ -1,5 +1,4 @@
-import os
-import random
+# import random
 import torch
 import numpy as np
 from matplotlib import pyplot as plt
@@ -23,14 +22,14 @@ def main():
 
     sac = SAC(flattened_state_dim, action_dim, max_action, device, env.NUM_SATELLITES, env.NUM_GROUND_USER)
 
-    normalizer = Normalizer.ComplexNormalizer(env.NUM_SATELLITES, env.NUM_GROUND_USER)
-    num_episodes = 100
+    normalizer = Normalizer.ComplexNormalizer(env.NUM_SATELLITES,env.NUM_GROUND_USER)
+    num_episodes = 50
     max_timesteps = 60
     batch_size = 256
 
     def adjust_action(action, num_satellites, num_users):
         if not isinstance(action, torch.Tensor):
-            action = torch.tensor(action)
+            torch.tensor(action, device=device)
         action_2d = action.view(num_satellites, num_users)
 
         # 确保每个用户只连接一个卫星，每个卫星只服务一个用户
@@ -56,9 +55,6 @@ def main():
         return adjusted_action
 
     episode_rewards = []  # 用于存储每个 episode 的奖励
-    checkpoint_dir = "checkpoints"
-    os.makedirs(checkpoint_dir, exist_ok=True)
-
     for episode in range(num_episodes):
         state, _ = env.reset()
         state = flatten_state(state).to(device)
@@ -80,10 +76,9 @@ def main():
         for t in range(max_timesteps):
             action = sac.select_action(state)
             action_tensor = torch.tensor(action).to(device)  # 确保 action 是 PyTorch 张量
-            # adjust_action(action_tensor, env.NUM_SATELLITES, env.NUM_GROUND_USER)
-
+            action = adjust_action(action_tensor, env.NUM_SATELLITES, env.NUM_GROUND_USER)
             try:
-                next_state, reward, done, _ = env.step(action_tensor.cpu().numpy())  # 使用转换后的action
+                next_state, reward, done, _ = env.step(action.cpu().numpy())  # 使用转换后的action
             except Exception as e:
                 print(f"Error during environment step: {e}")
                 break
@@ -98,7 +93,7 @@ def main():
             normalizer.update(next_state_np)
 
             normalizer_state = normalizer.normalize(next_state_np)
-            normalized_state_tensor = torch.tensor(normalizer_state).float().to(device)
+            normalized_state_tensor = torch.tensor(normalizer_state, dtype=torch.float, device=device)
 
             next_state = normalized_state_tensor
             not_done = 1.0 - float(done)
@@ -108,7 +103,7 @@ def main():
                                   not_done)
 
             state = next_state  # 更新state为下一状态（PyTorch张量）
-            episode_reward += reward.item()
+            episode_reward += reward
 
             if len(sac.replay_buffer) > batch_size:
                 sac.update_parameters(batch_size)
@@ -118,8 +113,8 @@ def main():
         episode_rewards.append(episode_reward)  # 记录当前 episode 的奖励
         print(f"Episode {episode + 1}, Reward: {episode_reward}")
 
-        if (episode + 1) % 50 == 0:
-            sac.save(os.path.join(checkpoint_dir, f"sac_checkpoint_{episode + 1}"))
+        if (episode + 1) % 10 == 0:
+            sac.save(f"sac_checkpoint_{episode + 1}")
 
         if (episode + 1) % 100 == 0:
             avg_reward = np.mean(

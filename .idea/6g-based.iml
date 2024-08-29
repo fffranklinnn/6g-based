@@ -3,6 +3,7 @@
   <component name="NewModuleRootManager">
     <content url="file://$MODULE_DIR$">
       <excludeFolder url="file://$MODULE_DIR$/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/src/checkpoints" />
     </content>
     <orderEntry type="jdk" jdkName="RL" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />

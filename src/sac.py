@@ -105,7 +105,11 @@ class SAC:
         self.max_action = max_action
         self.discount = 0.99
         self.tau = 0.005
-        self.alpha = 0.2
+        # self.alpha = 0.2
+
+        self.target_entropy = -action_dim  # 目标熵，通常设置为-action_dim
+        self.log_alpha = torch.tensor(0.0, requires_grad=True, device=self.device)
+        self.alpha_optimizer = optim.Adam([self.log_alpha], lr=3e-4)
 
         # self.normalizer = ComplexNormalizer(num_satellites, num_ground_user)  # 初始化归一化器
 
@@ -120,15 +124,6 @@ class SAC:
             return
 
         state, action, next_state, reward, not_done = self.replay_buffer.sample(batch_size)
-
-        # 归一化状态和下一状态（避免不必要的数据传输）
-        state_np = state.cpu().numpy()
-        next_state_np = next_state.cpu().numpy()
-        # state_np = self.normalizer.normalize(state_np)
-        # next_state_np = self.normalizer.normalize(next_state_np)
-
-        state = torch.FloatTensor(state_np).to(self.device)
-        next_state = torch.FloatTensor(next_state_np).to(self.device)
 
         with torch.no_grad():
             next_action = self.actor(next_state)
@@ -170,7 +165,7 @@ class SAC:
         predicted_action = self.actor(state)  # 这可能是三维的
         predicted_action_flattened = predicted_action.view(predicted_action.size(0), -1)  # 展平为二维张量
         policy_entropy = -torch.sum(predicted_action * torch.log(predicted_action + 1e-7), dim=-1).mean()
-        actor_loss = -self.critic1(state, predicted_action_flattened).mean() + self.alpha * policy_entropy
+        actor_loss = -self.critic1(state, predicted_action_flattened).mean() + torch.exp(self.log_alpha) * policy_entropy
 
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
@@ -180,7 +175,13 @@ class SAC:
         #         print(f"Actor - Gradient of {name} is {param.grad.norm().item()}")  # 打印梯度的L2范数
         #     else:
         #         print(f"Actor - Gradient of {name} is None")
+        alpha_loss = -(self.log_alpha * (policy_entropy + self.target_entropy).detach()).mean()
 
+        self.alpha_optimizer.zero_grad()
+        alpha_loss.backward()
+        self.alpha_optimizer.step()
+
+        self.alpha = self.log_alpha.exp().item()
         for param, target_param in zip(self.critic1.parameters(), self.target_critic1.parameters()):
             target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
 

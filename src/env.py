@@ -1,4 +1,4 @@
-# import numpy as np
+import numpy as np
 import pandas as pd
 import torch
 import os
@@ -37,7 +37,7 @@ class Env:
         self.noise_power = self.k * self.noise_temperature * self.total_bandwidth  # 噪声功率计算
         self.angle_threshold = 15  # 单位：度
         self.w1 = 5e-6  # 切换次数的权重
-        self.w2 = 1e-7  # 用户传输速率的权重
+        self.w2 = 4e-7  # 用户传输速率的权重
 
         # 定义动作空间和观察空间
         self.action_space = torch.zeros(self.NUM_SATELLITES * self.NUM_GROUND_USER, dtype=torch.int)
@@ -198,13 +198,30 @@ class Env:
             print("Reached the end of time slots, terminating...")
             return self.terminate()
 
-        self.access_decision = action_matrix
+        # 获取当前时间步的覆盖情况，并对波束维度进行降维处理
+        # current_coverage 的形状将是 [NUM_SATELLITES, NUM_GROUND_USER, 2]
+        current_coverage = self.coverage_indicator[self.current_time_step]
+        # 通过对波束维度进行逻辑或操作来降维，以确定用户是否被任一波束覆盖
+        # 逻辑或操作后的形状为 [NUM_SATELLITES, NUM_GROUND_USER]
+        # 使用 torch.any 方法沿着波束维度进行操作，dim=2 指的是第三个维度（因为维度从0开始计数）
+        covered_by_any_beam = torch.any(current_coverage, dim=2)
+        covered_by_any_beam = covered_by_any_beam.transpose(0, 1)
+        covered_by_any_beam = covered_by_any_beam.to(self.device)  # 同样确保 covered_by_any_beam 在正确的设备上
+
+        # 将 covered_by_any_beam 转换为 float 类型，以便与 action_matrix 进行乘法操作
+        # print(action_matrix.shape)  # 应该输出类似于 torch.Size([NUM_SATELLITES, NUM_GROUND_USER])
+        # print(covered_by_any_beam.shape)  # 同上
+        valid_action_matrix = action_matrix * covered_by_any_beam.float()
+        self.access_decision = valid_action_matrix
+
+        # self.access_decision = action_matrix
         # numpy_array = self.access_decision.cpu().numpy()
 
         if self.current_time_step > 0:
             self.update_switch_count(action_matrix)
 
         self.update_rates_and_capacity(action_matrix)
+        self.update_previous_access_strategy(valid_action_matrix)
         reward = self.calculate_reward(action_matrix)
         # print(f"Reward at step {self.current_time_step}: {reward}")
 
@@ -290,8 +307,6 @@ class Env:
 
     def calculate_reward(self, action_matrix: torch.Tensor) -> float:
         reward = 0
-        #print(self.channel_capacity)
-        # 假设 self.channel_capacity 已经不再使用时间维度
         # 对应元素相乘
         result = torch.mul(action_matrix, self.channel_capacity)
         #print(result)
@@ -324,7 +339,6 @@ class Env:
         distance = self.radius_earth * (self.radius_earth + sat_heights) / torch.sqrt(
             (self.radius_earth + sat_heights) ** 2 - self.radius_earth ** 2 * torch.cos(torch.deg2rad(eval_angles)) ** 2
         )
-
         return distance
 
     def calculate_DL_pathloss_matrix(self, distance_matrix: torch.Tensor) -> torch.Tensor:
@@ -411,8 +425,8 @@ class Env:
                 self.switch_count += switch_matrix.sum(dim=0)
             # print(f"Updated switch count: {self.switch_count}")
 
-        # 在每次调用结束时，将当前的接入决策保存为下一次的前一个接入决策
-        self.previous_access_strategy_space = action_matrix.clone()
+    def update_previous_access_strategy(self, action):
+        self.previous_access_strategy_space = action.clone()
 
     def update_rates_and_capacity(self, action_matrix: torch.Tensor):
         distance_matrix = self.calculate_distance_matrix()[self.current_time_step]

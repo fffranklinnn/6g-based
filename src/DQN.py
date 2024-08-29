@@ -5,6 +5,8 @@ import torch.optim as optim
 from collections import deque
 import random
 import torch.nn.functional as F
+
+
 # --------------------------------------- #
 # 经验回放池
 # --------------------------------------- #
@@ -38,6 +40,7 @@ class ReplayBuffer:
     def __len__(self):
         return len(self.buffer)
 
+
 # -------------------------------------- #
 # 构造深度学习网络，输入状态s，得到各个动作的reward
 # -------------------------------------- #
@@ -62,6 +65,7 @@ class Net(nn.Module):
         return a
         # return self.max_action * torch.tanh(self.l3(a))
 
+
 class target_q_net(nn.Module):
     def __init__(self, state_dim, action_dim):
         super(target_q_net, self).__init__()
@@ -82,17 +86,19 @@ class target_q_net(nn.Module):
         q = self.l1(q_input)
         q = torch.relu(self.l2(q))
         return self.l3(q)
+
+
 # -------------------------------------- #
 # 构造深度强化学习模型
 # -------------------------------------- #
 class DQN:
     # （1）初始化
-    def __init__(self, state_dim,action_dim, device):
+    def __init__(self, state_dim, action_dim, device):
         # 属性分配
 
         self.discount = 0.90
-        self.epsilon = 1# 贪婪策略，有1-epsilon的概率探索
-        self.target_update = 20   # 目标网络的参数的更新频率
+        self.epsilon = 1  # 贪婪策略，有1-epsilon的概率探索
+        self.target_update = 100  # 目标网络的参数的更新频率
         self.device = device  # 在GPU计算
         # 计数器，记录迭代次数
         self.count = 0
@@ -100,13 +106,14 @@ class DQN:
         # 构建2个神经网络，相同的结构，不同的参数
         self.q_net = Net(state_dim).to(self.device)
         # 实例化目标网络
-        self.target_q_net = target_q_net(state_dim,action_dim).to(self.device)
+        self.target_q_net = target_q_net(state_dim, action_dim).to(self.device)
 
         # 优化器，更新训练网络的参数
-        self.target_q_net_optimizer = torch.optim.Adam(self.target_q_net.parameters(), lr=3e-6)
-        self.q_net_optimizer = torch.optim.Adam(self.q_net.parameters(), lr=3e-6)
+        self.target_q_net_optimizer = torch.optim.Adam(self.target_q_net.parameters(), lr=1e-6)
+        self.q_net_optimizer = torch.optim.Adam(self.q_net.parameters(), lr=1e-6)
         self.replay_buffer = ReplayBuffer(max_size=100000, state_dim=state_dim, action_dim=action_dim,
-                                      device=self.device)
+                                          device=self.device)
+
     # （2）动作选择
     def take_action(self, state, action_dim):
         state = state.to(self.device)
@@ -138,13 +145,12 @@ class DQN:
         state = torch.FloatTensor(state_np).to(self.device)
         next_state = torch.FloatTensor(next_state_np).to(self.device)
 
-
-        q_values = self.target_q_net(state,action)
+        q_values = self.target_q_net(state, action)
         with torch.no_grad():
             next_action = self.q_net(next_state)
             # 假设 next_action 是三维的：批次大小 x 用户数 x 卫星数
             next_action_flattened = next_action.view(next_action.size(0), -1)  # 展平为二维张量
-            max_next_q_values = self.target_q_net(next_state,next_action_flattened)
+            max_next_q_values = self.target_q_net(next_state, next_action_flattened)
             # 目标网络输出的当前状态的q(state_value)：即时奖励+折扣因子*下个时刻的最大回报
             q_targets = reward.unsqueeze(1) + not_done.unsqueeze(1) * self.discount * max_next_q_values
 
