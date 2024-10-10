@@ -113,7 +113,7 @@ class SAC:
 
         # self.normalizer = ComplexNormalizer(num_satellites, num_ground_user)  # 初始化归一化器
 
-    def select_action(self, state):
+    def select_action_sac(self, state):
         state = state.to(self.device)
         state = state.unsqueeze(0)
         with torch.no_grad():
@@ -205,7 +205,7 @@ class SAC:
     def interact_with_environment(self, env, num_steps):
         state = env.reset()
         for _ in range(num_steps):
-            action = self.select_action(state)
+            action = self.select_action_sac(state)
             next_state, reward, done, _ = env.step(action)
             # self.normalizer.update(state)  # 更新归一化器
             self.replay_buffer.add(state, action, next_state, reward, float(not done))

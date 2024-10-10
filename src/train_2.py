@@ -1,6 +1,8 @@
 # import random
 import torch
 import numpy as np
+import os
+import csv
 from matplotlib import pyplot as plt
 
 from env import Env  # 假设 env.py 中的 Env 类已经导入
@@ -22,8 +24,8 @@ def main():
 
     dqn = DQN(flattened_state_dim, action_dim, device)
 
-    normalizer = Normalizer.ComplexNormalizer(env.NUM_SATELLITES,env.NUM_GROUND_USER)
-    num_episodes = 100
+    normalizer = Normalizer.ComplexNormalizer(env.NUM_SATELLITES, env.NUM_GROUND_USER)
+    num_episodes = 200
     max_timesteps = 60
     batch_size = 256
 
@@ -54,7 +56,7 @@ def main():
 
         return adjusted_action
 
-    episode_rewards = []  # 用于存储每个 episode 的奖励
+    episode_rewards_dqn = []  # 用于存储每个 episode 的奖励
     for episode in range(num_episodes):
         state, _ = env.reset()
         state = flatten_state(state).to(device)
@@ -71,14 +73,14 @@ def main():
         normalized_state_tensor = torch.tensor(normalizer_state).float().to(device)
 
         state = normalized_state_tensor  # 此时的state为PyTorch张量
-        episode_reward = 0
+        episode_reward_dqn = 0
 
         for t in range(max_timesteps):
-            action = dqn.take_action(state,action_dim)
-            action_tensor = torch.tensor(action).to(device)  # 确保 action 是 PyTorch 张量
-            action = adjust_action(action_tensor, env.NUM_SATELLITES, env.NUM_GROUND_USER)
+            action_dqn = dqn.take_action(state, action_dim)
+            action_tensor = torch.tensor(action_dqn).to(device)  # 确保 action 是 PyTorch 张量
+            action_dqn = adjust_action(action_tensor, env.NUM_SATELLITES, env.NUM_GROUND_USER)
             try:
-                next_state, reward, done, _ = env.step(action.cpu().numpy())  # 使用转换后的action
+                next_state, reward_dqn, done, _ = env.step(action_dqn.cpu().numpy())  # 使用转换后的action
             except Exception as e:
                 print(f"Error during environment step: {e}")
                 break
@@ -99,32 +101,45 @@ def main():
             not_done = 1.0 - float(done)
 
             # 现在state, action, next_state都是PyTorch张量，需要转换为NumPy数组以存储
-            dqn.replay_buffer.add(state.cpu().numpy(), action_tensor.cpu().numpy(), next_state.cpu().numpy(), reward,
+            dqn.replay_buffer.add(state.cpu().numpy(), action_tensor.cpu().numpy(), next_state.cpu().numpy(),
+                                  reward_dqn,
                                   not_done)
 
             state = next_state  # 更新state为下一状态（PyTorch张量）
-            episode_reward += reward
+            episode_reward_dqn += reward_dqn
 
             if len(dqn.replay_buffer) > batch_size:
                 dqn.update(batch_size)
 
             if done:
                 break
-        episode_rewards.append(episode_reward)  # 记录当前 episode 的奖励
-        print(f"Episode {episode + 1}, Reward: {episode_reward}")
+        episode_rewards_dqn.append(episode_reward_dqn.cpu())  # 记录当前 episode 的奖励
+        print(f"Episode {episode + 1}, Reward: {episode_reward_dqn}")
 
-        #if (episode + 1) % 10 == 0:
-        #    sac.save(f"sac_checkpoint_{episode + 1}")
-        '''
-        if (episode + 1) % 100 == 0:
-            avg_reward = np.mean(
-                [env.step(torch.tensor(dqn.take_action(flatten_state(env.reset()[0],action_dim)(flatten_state(env.reset()[0]).to(device))).cpu().numpy())[1]
-                 for _ in range(10)])
-            print(f"Episode {episode + 1}, Average Reward over 10 episodes: {avg_reward}")
-        '''
+    os.makedirs('./data', exist_ok=True)
+    plt.figure()
+    plt.plot(range(1, num_episodes + 1), episode_rewards_dqn, marker='o')
+    plt.xlabel('Episode')
+    plt.ylabel('Reward')
+    plt.title('Reward per Episode')
+    plt.grid()
+    plt.show()
 
+    with open("data_sac.csv", "w", newline='') as fo:
+        header = ["Episode", "Reward"]
+        writer = csv.DictWriter(fo, fieldnames=header)
+        writer.writeheader()
+        for episode, reward in zip(range(1, num_episodes + 1), episode_rewards_dqn):
+            writer.writerow({"Episode": episode, "Reward": reward})
+
+    # fo = open("data_sac.csv", "w", newline='')
+    # header = ["Episode", "Reward"]
+    # writer = csv.DictWriter(fo, fieldnames=header)
+    # writer.writeheader()
+    np.savez_compressed('./data/dqn_dataset', x=np.arange(num_episodes), episode_rewards=episode_rewards_dqn)
     env.close()
 
+#.git
 
 if __name__ == "__main__":
     main()

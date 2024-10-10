@@ -1,4 +1,4 @@
-import numpy as np
+# import numpy as np
 import pandas as pd
 import torch
 import os
@@ -33,7 +33,7 @@ class Env:
         self.EIRP = 73.1  # 单位:dBm
         self.k = 1.380649e-23  # 单位:J/K
         self.radius_earth = 6731e3  # 单位:m
-        self.EIRP_watts = 10 ** ((self.EIRP - 30) / 10)  # 将 EIRP 从 dBm 转换为瓦特
+        # self.EIRP_watts = 10 ** ((self.EIRP - 30) / 10)  # 将 EIRP 从 dBm 转换为瓦特
         self.noise_power = self.k * self.noise_temperature * self.total_bandwidth  # 噪声功率计算
         self.angle_threshold = 15  # 单位：度
         self.w1 = 5e-6  # 切换次数的权重
@@ -354,13 +354,15 @@ class Env:
         # 计算路径损耗矩阵，其形状为 [NUM_TIME_SLOTS, NUM_SATELLITES, NUM_GROUND_USER]
         loss = self.calculate_DL_pathloss_matrix(distance_matrix)
 
+        CNR = self.EIRP + self.receive_benefit_ground - 30 - 10 * torch.log10(self.k * self.total_bandwidth * self.noise_temperature * loss)
+        return CNR
         # 计算接收功率（单位：瓦特），假设 self.EIRP_watts 和 self.receive_benefit_ground 是标量
-        received_power_watts = self.EIRP_watts * 10 ** (self.receive_benefit_ground / 10) / (10 ** (loss / 10))
-        # print(f"received power watts:",{received_power_watts})
-
-        # 计算 CNR（线性值），假设 self.noise_power 是标量
-        CNR_linear = received_power_watts / self.noise_power
-        return CNR_linear
+        # received_power_watts = self.EIRP_watts * 10 ** (self.receive_benefit_ground / 10) / (10 ** (loss / 10))
+        # # print(f"received power watts:",{received_power_watts})
+        #
+        # # 计算 CNR（线性值），假设 self.noise_power 是标量
+        # CNR_linear = received_power_watts / self.noise_power
+        # return CNR_linear
 
     def calculate_interference_matrix(self, time_slot: int, action_matrix: torch.Tensor) -> torch.Tensor:
         interference_matrix = torch.zeros((self.NUM_SATELLITES, self.NUM_GROUND_USER), dtype=torch.float32,
@@ -383,7 +385,7 @@ class Env:
 
         # 计算路径损耗矩阵，传递正确的距离矩阵
         loss = self.calculate_DL_pathloss_matrix(current_distance_matrix)
-        total_interference_power_watts = 0
+        total_interference = 0
 
         for satellite_index in range(self.NUM_SATELLITES):
             if satellite_index != accessed_satellite_index and (
@@ -393,13 +395,15 @@ class Env:
                     # print(f"[calculate_interference] Processing satellite_index={accessed_satellite_index}, user_index={user_index}")
                     continue
                 loss_value = loss[satellite_index, user_index]
-                EIRP_watts = 10 ** ((self.EIRP - 30) / 10)
-                interference_power_watts = EIRP_watts * (10 ** (self.receive_benefit_ground / 10)) / (
-                        10 ** (loss_value / 10))
-                total_interference_power_watts += interference_power_watts
-
-        total_interference_dBm = 10 * torch.log10(torch.tensor(total_interference_power_watts).clone().detach()) + 30
-        return total_interference_dBm.item()
+                # EIRP_watts = 10 ** ((self.EIRP - 30) / 10)
+                # interference_power_watts = EIRP_watts * (10 ** (self.receive_benefit_ground / 10)) / (
+                #         10 ** (loss_value / 10))
+                interference = self.EIRP + self.receive_benefit_ground - 30 - 10 * torch.log10(self.k * self.total_bandwidth * self.noise_temperature * loss_value)
+                # total_interference_power_watts += interference
+                total_interference += interference
+        # total_interference_dBm = 10 * torch.log10(torch.tensor(total_interference_power_watts).clone().detach()) + 30
+        # return total_interference_dBm.item()
+        return total_interference
 
     def close(self):
         pass
